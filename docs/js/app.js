@@ -29,11 +29,21 @@ function scheduleBackup() {
   if (state.settings.backup_auto !== "1" || !state.settings.gh_token || !state.settings.gh_repo) return;
   clearTimeout(backupT);
   backupT = setTimeout(async () => {
-    try { await sync.pushBackup(); $("#backup-state").textContent = "backed up " + new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }); }
-    catch (e) { $("#backup-state").textContent = "backup failed: " + e.message; }
+    try { await sync.pushBackup(); $("#backup-state").textContent = "backed up " + new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }); await syncOk(); }
+    catch (e) { $("#backup-state").textContent = "backup failed: " + e.message; await syncFailed("Backup", e); }
   }, 60000);
 }
 async function changed() { await loadDay(); scheduleBackup(); }
+// GitHub problems must be visible, not silent: a banner on the Today screen until the next success
+async function syncFailed(what, e) {
+  await db.setSetting("gh_error", `${what} failed — ${e.message}${e.auth ? ". Fix the token or repo in ⚙ Settings." : ""}`);
+  showSyncWarn();
+}
+async function syncOk() { if (await db.setting("gh_error")) { await db.setSetting("gh_error", ""); showSyncWarn(); } }
+async function showSyncWarn() {
+  const msg = await db.setting("gh_error", ""); const el = $("#sync-warn");
+  el.hidden = !msg; el.textContent = msg ? "⚠ " + msg : "";
+}
 
 // ------------------------------------------------------------ day model
 async function loadDay(day = state.day) {
@@ -49,19 +59,20 @@ async function loadDay(day = state.day) {
     totals.kcal += m.kcal; totals.lo += m.kcal_lo; totals.hi += m.kcal_hi; totals.protein += m.protein_g;
     if (m.source === "shake" || /whey/i.test(m.label || "")) totals.whey += m.protein_g;
   }
-  const exp = eng.estimateExpenditure(allMeals, allBody, s, todayStr());
-  const target = eng.currentTarget(exp, s);
+  const allWorkouts = await db.all("workouts");
+  const exp = eng.estimateExpenditure(allMeals, allBody, s, todayStr(), 21, allWorkouts);
+  const target = eng.currentTarget(exp, s, workouts);
   const v = eng.verdict(totals, meals.length > 0, s, target);
   const trend = eng.weightTrend(allBody, s), latest = trend.at(-1) || null;
-  const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg);
+  const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   state.data = { day, is_today: day === todayStr(), meals, workouts, totals, target, verdict: v, exp,
-    body: latest ? { ...latest, out_of_bounds: !(wl <= latest.trend && latest.trend <= wh) } : null,
+    body: latest ? { ...latest, out_of_bounds: bounded && !(wl <= latest.trend && latest.trend <= wh) } : null,
     pf: parseFloat(s.protein_floor_g), pc: parseFloat(s.protein_ceiling_g) };
   render();
 }
 
 const labelKind = (k) => ({ revl_move: "REVL Move", revl_sweat: "REVL Sweat", revl_perform: "REVL Perform",
-  run_vest: "Vest run", run: "Run", lift: "Lift", swim: "Swim", other: "Workout" }[k] || k);
+  run_vest: "Vest run", calves: "Calves", run: "Run", lift: "Lift", swim: "Swim", other: "Workout" }[k] || k);
 
 function render() {
   const d = state.data; if (!d) return;
@@ -86,7 +97,8 @@ function render() {
   $("#k-val").textContent = fmt(t.kcal); $("#k-range").textContent = `${fmt(k.lo)}–${fmt(k.hi)}`;
   $("#k-fill").style.width = Math.min(100, t.kcal / kmax * 100) + "%"; $("#k-fill").className = "fill " + v.kcal;
   $("#k-band").style.left = k.lo / kmax * 100 + "%"; $("#k-band").style.width = (k.hi - k.lo) / kmax * 100 + "%";
-  $("#k-foot").textContent = `${v.kcal_msg} · ${k.source === "measured" ? `measured, ${k.confidence} confidence` : "provisional until the engine has data"}` + (t.kcal ? ` · range ${fmt(t.lo)}–${fmt(t.hi)}` : "");
+  const sessionNote = k.sessions ? ` · rest base ${fmt(k.base)} + sessions ${fmt(k.sessions)}` : ` · rest day, base ${fmt(k.base)}`;
+  $("#k-foot").textContent = `${v.kcal_msg}${sessionNote} · ${k.source === "measured" ? `measured, ${k.confidence} confidence` : "provisional until the engine has data"}` + (t.kcal ? ` · range ${fmt(t.lo)}–${fmt(t.hi)}` : "");
 
   const vd = $("#verdict");
   vd.className = "verdict " + (v.kcal === "over" ? "crit" : v.protein === "short" ? "warn" : "ok");
@@ -102,10 +114,13 @@ function render() {
   for (const r of rows) {
     const li = document.createElement("li"), time = (r.at || "").slice(11, 16);
     if (r._t === "meal") {
-      li.className = r.needs_review ? "review" : "";
-      const sub = [r.source === "backfill" ? "from chat" : r.source === "photo" ? "estimated" : null, r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
+      const partial = !r.needs_review && looksPartial(r);
+      li.className = r.needs_review || partial ? "review" : "";
+      if (r.source === "backfill" || r.source === "backfill-ai") li.title = "Tap to value this with AI";
+      const sub = [r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "photo" ? "estimated" : null, r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
       li.innerHTML = `<span class="t">${time}</span><span class="l">${esc(r.label)}${sub ? `<small>${esc(sub)}</small>` : ""}</span><span class="n p">${fmt(r.protein_g, 0)}g</span><span class="n">${fmt(r.kcal)}</span><button class="x" aria-label="Delete">×</button>`;
       $(".x", li).onclick = async () => { await db.del("meals", r.id); toast("Removed"); changed(); };
+      if (r.source === "backfill" || r.source === "backfill-ai") $(".l", li).onclick = () => startFix(r);
     } else {
       li.className = "workout";
       li.innerHTML = `<span class="t">${time}</span><span class="l">${labelKind(r.kind)}${r.detail ? `<small>${esc(r.detail)}</small>` : ""}</span><span class="n"></span><span class="n"></span><button class="x" aria-label="Delete">×</button>`;
@@ -114,6 +129,7 @@ function render() {
     log.appendChild(li);
   }
   $("#est-hint").hidden = !!state.settings.gemini_key;
+  showSyncWarn();
 }
 
 // ------------------------------------------------------------ meals
@@ -124,11 +140,32 @@ async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, ven
 }
 
 // ------------------------------------------------------------ estimate
-$("#est-files").addEventListener("change", (e) => {
-  state.estFiles = [...e.target.files];
+function onPhotos(e) {
+  state.estFiles = [...state.estFiles, ...e.target.files].slice(0, 4);
   const t = $("#est-thumbs"); t.innerHTML = "";
   for (const f of state.estFiles) { const img = document.createElement("img"); img.src = URL.createObjectURL(f); img.alt = ""; t.appendChild(img); }
-});
+  e.target.value = "";
+}
+$("#est-camera").addEventListener("change", onPhotos);
+$("#est-gallery").addEventListener("change", onPhotos);
+
+// a ? row (chat import the parser couldn't value): tap it, its text lands in the estimator, Add replaces the row
+const looksPartial = (m) => m.source === "backfill" && m.kcal < 150 && rawText(m).length > 25;
+const rawText = (m) => { let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } } return d?.raw || m.label; };
+function startFix(meal) {
+  resetEstimate();
+  state.fixing = meal.id;
+  $("#est-text").value = rawText(meal);
+  $("#est-fixing").hidden = false;
+  $("#est-fixing").textContent = "Valuing the ? row from " + meal.at.slice(11, 16) + " — Add to log will replace it.";
+  $("#est-text").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+async function valueRow(meal, computed, estId) {
+  let d = meal.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = { raw: meal.label }; } }
+  await db.put("meals", { ...meal, label: computed.dish, kcal: computed.kcal, kcal_lo: computed.kcal_lo, kcal_hi: computed.kcal_hi,
+    protein_g: computed.protein_g, source: "backfill-ai", needs_review: 0,
+    detail: { ...(d || {}), estimate_id: estId, confidence: computed.confidence, model_share: computed.model_share } });
+}
 async function runEstimate(correction = null) {
   const prior = correction != null ? state.est : null;
   const text = correction ?? $("#est-text").value;
@@ -138,7 +175,7 @@ async function runEstimate(correction = null) {
     const out = await runGemini({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL,
       images: prior ? [] : state.estFiles, text, share, lookupMode: state.settings.ai_lookup || "auto",
       prior, priorImages: prior ? prior.images : [] });
-    const at = atFor();
+    const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share, model: state.settings.ai_model || DEFAULT_MODEL,
       ident: out.ident, result: out.result, thumb: out.thumbs[0] || (prior?.thumb ?? null), notes: out.notes, usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
     row.id = await db.add("estimates", row);
@@ -172,15 +209,20 @@ function renderEstimate() {
   $("#est-refine-go").onclick = () => { const c = $("#est-refine").value.trim(); if (c) runEstimate(c); };
   $("#est-discard").onclick = resetEstimate;
   $("#est-add").onclick = async () => {
-    const id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1,
+    let id = null;
+    if (state.fixing) {
+      const meal = await db.get("meals", state.fixing);
+      if (meal) { await valueRow(meal, r, e.id); id = meal.id; }
+    }
+    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1,
       detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
     await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
-    toast(`Added ${r.dish}`); resetEstimate(); changed();
+    toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); changed();
   };
 }
 function resetEstimate() {
-  state.est = null; state.estFiles = [];
-  $("#est-files").value = ""; $("#est-thumbs").innerHTML = ""; $("#est-text").value = ""; $("#est-share").value = "1";
+  state.est = null; state.estFiles = []; state.fixing = null;
+  $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = ""; $("#est-share").value = "1";
   $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = "";
 }
 
@@ -236,7 +278,9 @@ $$("#workouts .chip").forEach(c => c.onclick = async () => {
   let detail = null;
   if (c.dataset.kind === "lift") detail = prompt("What did you lift? e.g. 3RM back squat 100kg, or calves") || null;
   if (c.dataset.kind === "revl_perform") detail = prompt("Upper or lower?", "upper") || null;
-  if (c.dataset.kind === "run_vest") detail = (prompt("Distance? e.g. 3km", "3km") || "") + " 10kg vest";
+  if (c.dataset.kind === "calves") detail = prompt("Calves: sets x reps, if you track it", "10kg vest") || "10kg vest";
+  if (c.dataset.kind === "run") detail = prompt("Distance and time? e.g. 2.4km 9:30", "") || null;
+  if (c.dataset.kind === "swim") detail = prompt("Distance or time? e.g. 50m / 30 min", "") || null;
   const at = atFor();
   await db.add("workouts", { day: at.slice(0, 10), at, kind: c.dataset.kind, detail, source: "manual" });
   toast(`${labelKind(c.dataset.kind)} logged`); changed();
@@ -257,8 +301,10 @@ async function loadTrend() {
   await loadDay();                                   // fresh expenditure + target
   const s = state.settings, body = await db.all("body");
   const start = eng.addDays(todayStr(), -120);
+  const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   state.trend = { points: eng.weightTrend(body.filter(b => b.day >= start), s), current: state.data.target,
-    weight_lo: parseFloat(s.weight_lo_kg), weight_hi: parseFloat(s.weight_hi_kg), creatine_window: eng.creatineWindow(s) };
+    weight_lo: bounded ? wl : null, weight_hi: bounded ? wh : null, creatine_window: eng.creatineWindow(s) };
+  $("#legend-band").textContent = bounded ? `${wl}–${wh} target` : "target range (set in ⚙)";
   drawChart(); renderExpenditure();
   const last = state.trend.points.at(-1);
   $("#trend-latest").textContent = last ? `${last.weight} kg · trend ${last.trend}` + (last.bodyfat != null ? ` · ${last.bodyfat}% fat` : "") : "no weigh-ins yet";
@@ -274,9 +320,9 @@ function drawChart() {
   if (!pts.length) { ctx.fillStyle = col("--faint"); ctx.font = "13px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText("No weigh-ins yet — pull from GitHub or log one by hand", W / 2, H / 2); return; }
   const pad = { l: 38, r: 10, t: 10, b: 22 }, day0 = new Date(pts[0].day), nDays = Math.max(7, (new Date() - day0) / 864e5);
   const x = (d) => pad.l + ((new Date(d) - day0) / 864e5) / nDays * (W - pad.l - pad.r);
-  const ws = pts.flatMap(p => [p.weight, p.trend]).concat([state.trend.weight_lo, state.trend.weight_hi]);
+  const ws = pts.flatMap(p => [p.weight, p.trend]).concat(state.trend.weight_lo != null ? [state.trend.weight_lo, state.trend.weight_hi] : []);
   const ymin = Math.min(...ws) - 0.5, ymax = Math.max(...ws) + 0.5, y = (v) => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
-  ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.14; ctx.fillRect(pad.l, y(state.trend.weight_hi), W - pad.l - pad.r, y(state.trend.weight_lo) - y(state.trend.weight_hi)); ctx.globalAlpha = 1;
+  if (state.trend.weight_lo != null) { ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.14; ctx.fillRect(pad.l, y(state.trend.weight_hi), W - pad.l - pad.r, y(state.trend.weight_lo) - y(state.trend.weight_hi)); ctx.globalAlpha = 1; }
   const cw = state.trend.creatine_window;
   if (cw) { const x0 = Math.max(pad.l, x(cw[0])), x1 = Math.min(W - pad.r, x(cw[1])); if (x1 > x0) { ctx.save(); ctx.beginPath(); ctx.rect(x0, pad.t, x1 - x0, H - pad.t - pad.b); ctx.clip(); ctx.strokeStyle = col("--faint"); ctx.globalAlpha = 0.5; for (let i = -H; i < W; i += 7) { ctx.beginPath(); ctx.moveTo(x0 + i, H); ctx.lineTo(x0 + i + H, 0); ctx.stroke(); } ctx.restore(); } }
   ctx.font = "10px " + col("--mono"); ctx.fillStyle = col("--faint"); ctx.textAlign = "right"; ctx.strokeStyle = col("--line"); ctx.lineWidth = 1;
@@ -291,12 +337,14 @@ function renderExpenditure() {
   const pill = `<span class="pill ${cur.confidence}">${cur.confidence === "none" ? "provisional" : cur.confidence + " confidence"}</span>`;
   el.innerHTML = cur.source === "provisional"
     ? `<h2 class="eyebrow">Expenditure</h2><div class="exp"><div class="big">${fmt(cur.target)} <small>kcal/day target</small></div>${pill}<p>${esc(cur.note)}</p><p>Log complete days and weigh in each morning. After ~7 complete days this number comes from your own intake and weight trend, not a formula.</p></div>`
-    : `<h2 class="eyebrow">Expenditure</h2><div class="exp"><div class="big">${fmt(cur.tdee)} <small>kcal/day measured · ${fmt(cur.tdee - cur.target)} deficit → target ${fmt(cur.target)}</small></div>${pill}<p>Band ${fmt(cur.lo)}–${fmt(cur.hi)} kcal. ${esc(cur.note)}</p><p>As of ${cur.as_of}. Recomputed on every load.</p></div>`;
+    : `<h2 class="eyebrow">Expenditure</h2><div class="exp"><div class="big">${fmt(cur.tdee)} <small>kcal/day measured average</small></div>${pill}
+      <p>Of that, ~${fmt(cur.session_avg)}/day was the training you logged in the window, so the rest-day expenditure is ~${fmt(cur.rest_base)}. Minus the deficit: <b>${fmt(cur.base)} on a rest day</b>, plus each session's burn on the days you train.</p>
+      <p>${esc(cur.note)}</p><p>As of ${cur.as_of}. Recomputed on every load.</p></div>`;
 }
 
 // ------------------------------------------------------------ data actions
 const dataMsg = (m) => { $("#data-msg").textContent = m; };
-async function guarded(btn, fn) { btn.disabled = true; try { await fn(); } catch (e) { dataMsg(e.message); } finally { btn.disabled = false; } }
+async function guarded(btn, fn) { btn.disabled = true; try { await fn(); await syncOk(); } catch (e) { dataMsg(e.message); if (e.auth) await syncFailed("GitHub", e); } finally { btn.disabled = false; } }
 $("#btn-pull").onclick = (e) => guarded(e.target, async () => {
   dataMsg("Pulling weigh-ins from GitHub…");
   const r = await sync.pullBody();
@@ -309,6 +357,29 @@ $("#btn-seed").onclick = (e) => guarded(e.target, async () => {
   const r = await sync.importSeed({ force: true });
   dataMsg(r.ok ? `Imported ${r.meals} meals, ${r.workouts} workouts.` : r.error);
   await loadProducts(); await loadDay(); await loadTrend(); scheduleBackup();
+});
+$("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
+  if (!state.settings.gemini_key) throw new Error("Add your Gemini key in ⚙ first.");
+  const rows = (await db.all("meals")).filter(m => m.needs_review || looksPartial(m)).sort((a, b) => a.at.localeCompare(b.at));
+  if (!rows.length) { dataMsg("No ? rows left."); return; }
+  if (!confirm("Value " + rows.length + " rows with AI from their text? About " + Math.ceil(rows.length * 7 / 60) + " min, no photos, free tier.")) return;
+  let done = 0, failed = 0;
+  for (const m of rows) {
+    dataMsg("Valuing " + (done + 1) + "/" + rows.length + ": " + rawText(m).slice(0, 50) + "…");
+    try {
+      const model = state.settings.ai_model || DEFAULT_MODEL;
+      const out = await runGemini({ apiKey: state.settings.gemini_key, model, images: [], text: rawText(m), share: 1, lookupMode: "off" });
+      const estId = await db.add("estimates", { day: m.day, at: m.at, text: rawText(m), share: 1, model, ident: out.ident, result: out.result, thumb: null, notes: null, usage: out.usage, parent_id: null, meal_id: m.id });
+      await valueRow(m, out.result, estId); done++;
+    } catch (err) {
+      failed++;
+      if (/rate limit/i.test(err.message)) { dataMsg("Rate limit after " + done + ". Waiting 60 s…"); await new Promise(r => setTimeout(r, 60000)); }
+      else if (failed > 3) { dataMsg("Stopped after " + done + " valued, " + failed + " failed: " + err.message); break; }
+    }
+    await new Promise(r => setTimeout(r, 7000));   // ~8/min, under the free tier's 10 RPM
+  }
+  dataMsg("Valued " + done + " of " + rows.length + (failed ? ", " + failed + " failed" : "") + ". Days that were incomplete now count toward expenditure.");
+  await loadDay(); scheduleBackup();
 });
 $("#btn-backup").onclick = (e) => guarded(e.target, async () => { dataMsg("Backing up…"); const r = await sync.pushBackup(); dataMsg(`Backed up ${r.meals} meals, ${r.body} weigh-ins.`); await loadTrend(); });
 $("#btn-restore").onclick = (e) => guarded(e.target, async () => {
@@ -341,8 +412,10 @@ const SETTINGS = [
   ["gh_repo", "GitHub data repo (owner/name)", "text"], ["gh_token", "GitHub token (Contents read/write)", "password"], ["backup_auto", "Auto-backup after changes (1/0)", "text"],
   ["protein_floor_g", "Protein floor (g)", "text"], ["protein_ceiling_g", "Protein ceiling (g)", "text"],
   ["weight_lo_kg", "Weight low (kg)", "text"], ["weight_hi_kg", "Weight high (kg)", "text"],
-  ["provisional_kcal", "Provisional kcal", "text"], ["recomp_deficit_kcal", "Recomp deficit (kcal)", "text"],
+  ["provisional_kcal", "Provisional rest-day base (kcal)", "text"], ["recomp_deficit_kcal", "Recomp deficit (kcal)", "text"],
   ["creatine_start", "Creatine start (YYYY-MM-DD)", "text"], ["creatine_settle_days", "Creatine settle (days)", "text"],
+  ["burn_revl_move", "Burn: REVL Move (kcal)", "text"], ["burn_revl_sweat", "Burn: REVL Sweat", "text"], ["burn_revl_perform", "Burn: REVL Perform", "text"],
+  ["burn_run", "Burn: Run", "text"], ["burn_swim", "Burn: Swim", "text"], ["burn_calves", "Burn: Calves", "text"], ["burn_lift", "Burn: Lift", "text"], ["burn_other", "Burn: other", "text"],
 ];
 $("#btn-settings").onclick = async () => {
   const s = await db.allSettings();
@@ -374,7 +447,8 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
     // once a day, quietly pick up new weigh-ins
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo && s.last_pull !== today) {
-      sync.pullBody().then(async r => { if (r.ok) { await db.setSetting("last_pull", today); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } } }).catch(() => {});
+      sync.pullBody().then(async r => { if (r.ok) { await db.setSetting("last_pull", today); await syncOk(); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } } })
+        .catch(e => syncFailed("Weigh-in pull", e));
     }
   } catch (e) { toast("Startup failed: " + e.message, 6000); console.error(e); }
 })();

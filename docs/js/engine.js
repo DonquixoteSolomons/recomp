@@ -44,6 +44,13 @@ export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
   return out;
 }
 
+/** Estimated burn of one logged session, from settings (per workout kind). */
+export function sessionKcal(workout, settings) {
+  const v = parseFloat(settings["burn_" + workout.kind]);
+  return Number.isFinite(v) ? v : parseFloat(settings.burn_other || "0") || 0;
+}
+export const sessionsKcal = (workouts, settings) => workouts.reduce((a, w) => a + sessionKcal(w, settings), 0);
+
 export function dailyIntake(meals) {
   const m = new Map();
   for (const r of meals) {
@@ -67,7 +74,7 @@ function slopePerDay(points) {
 const confidence = (n) => n < MIN_DAYS ? ["none", 0] : n < 14 ? ["low", 0.12] : n < 21 ? ["medium", 0.08] : ["good", 0.05];
 
 /** Estimate over the `window` days ending the day before `asOf`. */
-export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21) {
+export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21, workouts = []) {
   const end = addDays(asOf, -1), start = addDays(end, -(window - 1));
   const deficit = parseFloat(settings.recomp_deficit_kcal || "250");
   const intake = dailyIntake(meals.filter(m => m.day >= start && m.day <= end));
@@ -75,7 +82,8 @@ export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21
   const trend = weightTrend(bodyRows.filter(b => b.day >= start && b.day <= end), settings).filter(p => !p.creatine);
 
   const base = { as_of: asOf, window_days: window, days_with_intake: good.length, intake_avg: null,
-    trend_start: null, trend_end: null, tdee: null, tdee_lo: null, tdee_hi: null, target: null, confidence: "none", note: "" };
+    trend_start: null, trend_end: null, tdee: null, tdee_lo: null, tdee_hi: null, target: null, confidence: "none", note: "",
+    session_avg: null, rest_base: null, sessions_in_window: 0 };
   if (good.length < MIN_DAYS) { base.note = `${good.length} usable days of intake; need ${MIN_DAYS}.`; return base; }
   base.intake_avg = Math.round(good.reduce((a, [, v]) => a + v.kcal, 0) / good.length);
   if (trend.length < 2) { base.note = "Not enough weigh-ins outside the creatine window to read a trend."; return base; }
@@ -89,25 +97,37 @@ export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21
   const avgLo = good.reduce((a, [, v]) => a + v.lo, 0) / n, avgHi = good.reduce((a, [, v]) => a + v.hi, 0) / n;
   const tdee = avg - storedPerDay;
   const [conf, band] = confidence(Math.min(n, span + 1));
+  // the measured average contains whatever training happened; take it back out to get a rest-day base
+  const inWindow = workouts.filter(w => w.day >= start && w.day <= end);
+  const sessionAvg = sessionsKcal(inWindow, settings) / window;
   Object.assign(base, {
     trend_start: t0.trend, trend_end: t1.trend,
     tdee: Math.round(tdee), tdee_lo: Math.round((avgLo - storedPerDay) * (1 - band)), tdee_hi: Math.round((avgHi - storedPerDay) * (1 + band)),
     target: Math.round(tdee - deficit), confidence: conf,
+    session_avg: Math.round(sessionAvg), rest_base: Math.round(tdee - sessionAvg), sessions_in_window: inWindow.length,
     note: `${n} days intake, trend ${t0.trend} to ${t1.trend} kg over ${span} d (${deltaKg >= 0 ? "+" : ""}${deltaKg.toFixed(2)} kg, ${storedPerDay >= 0 ? "+" : ""}${Math.round(storedPerDay)} kcal/d stored).`,
   });
   return base;
 }
 
-/** What today's calorie band should be, and where it came from. */
-export function currentTarget(estimate, settings) {
-  const provisional = parseFloat(settings.provisional_kcal || "2350");
+/** Today's calorie band: a rest-day base plus whatever sessions were logged today.
+    Sessions move calories between days; they never change the week's total, which is
+    anchored to the measured expenditure (or, before that, to provisional_kcal as the base). */
+export function currentTarget(estimate, settings, todaysWorkouts = []) {
   const deficit = parseFloat(settings.recomp_deficit_kcal || "250");
+  const today = sessionsKcal(todaysWorkouts, settings);
   if (!estimate || estimate.confidence === "none") {
-    return { source: "provisional", target: provisional, lo: provisional - 100, hi: provisional + 100, tdee: null, confidence: "none",
-      note: "Formula-free estimate needs about 7 logged days with weigh-ins. Until then this is a conservative guess." };
+    const base = parseFloat(settings.provisional_kcal || "2000");
+    return { source: "provisional", base, sessions: today, target: base + today, lo: base + today - 100, hi: base + today + 100,
+      tdee: null, confidence: "none",
+      note: "Formula-free estimate needs about 7 logged days with weigh-ins. Until then provisional_kcal is the rest-day base." };
   }
-  return { source: "measured", target: estimate.target, lo: estimate.tdee_lo - deficit, hi: estimate.tdee_hi - deficit,
-    tdee: estimate.tdee, confidence: estimate.confidence, as_of: estimate.as_of, note: estimate.note };
+  const restTarget = estimate.rest_base - deficit;
+  const spread = (estimate.tdee_hi - estimate.tdee_lo) / 2;
+  return { source: "measured", base: restTarget, sessions: today, target: Math.round(restTarget + today),
+    lo: Math.round(restTarget + today - spread), hi: Math.round(restTarget + today + spread),
+    tdee: estimate.tdee, rest_base: estimate.rest_base, session_avg: estimate.session_avg,
+    confidence: estimate.confidence, as_of: estimate.as_of, note: estimate.note };
 }
 
 /** The question asked seven times in the chat, answered every time. */

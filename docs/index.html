@@ -46,12 +46,14 @@
   </section>
 
   <section class="verdict" id="verdict"></section>
+  <p class="syncwarn" id="sync-warn" hidden></p>
 
   <section class="block est">
     <div class="row between"><h2 class="eyebrow">Photo or description</h2><span class="mono muted" id="est-status"></span></div>
     <p class="hint" id="est-hint" hidden>Needs a free Gemini key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>, then paste it in ⚙ Settings. No card, ~1,500 estimates a day.</p>
     <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="est-files" accept="image/*" capture="environment" multiple hidden>📷 Photo</label>
+      <label class="btn filebtn"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden>📷 Camera</label>
+      <label class="btn filebtn"><input type="file" id="est-gallery" accept="image/*" multiple hidden>🖼 Gallery</label>
       <div class="thumbs" id="est-thumbs"></div>
     </div>
     <textarea id="est-text" class="text" rows="2" placeholder="What is it, where from, what you shared or skipped — e.g. “ayam penyet from Amigos Gangsa Road, didn't finish the rice”"></textarea>
@@ -59,6 +61,7 @@
       <label class="lbl small">my share <input class="num" id="est-share" type="number" min="0.05" max="1" step="0.05" value="1"></label>
       <button class="btn primary grow" id="est-go">Estimate</button>
     </div>
+    <p class="hint" id="est-fixing" hidden></p>
     <div id="est-result" hidden></div>
   </section>
 
@@ -85,11 +88,12 @@
       <button class="chip w" data-kind="revl_move">Move</button>
       <button class="chip w" data-kind="revl_sweat">Sweat</button>
       <button class="chip w" data-kind="revl_perform">Perform</button>
-      <button class="chip w" data-kind="run_vest">Vest run</button>
+      <button class="chip w" data-kind="calves">Calves</button>
       <button class="chip w" data-kind="run">Run</button>
       <button class="chip w" data-kind="lift">Lift</button>
       <button class="chip w" data-kind="swim">Swim</button>
     </div>
+    <p class="note">Each session raises today's target by its estimated burn (set per kind in ⚙). The week's total stays anchored to what the scale measures, so sessions move calories between days — they can't inflate the week.</p>
   </section>
 
   <details class="block">
@@ -120,7 +124,7 @@
     <canvas id="chart" height="220"></canvas>
     <div class="legend mono">
       <span><i class="sw dot"></i>reading</span><span><i class="sw line"></i>trend</span>
-      <span><i class="sw band"></i>70–75 target</span><span><i class="sw hatch"></i>creatine settling</span>
+      <span><i class="sw band"></i><span id="legend-band">target range</span></span><span><i class="sw hatch"></i>creatine settling</span>
     </div>
   </section>
 
@@ -134,6 +138,7 @@
       <button class="btn" id="btn-backup">Back up now</button>
       <button class="btn" id="btn-restore">Restore backup</button>
       <button class="btn" id="btn-seed">Import chat log</button>
+      <button class="btn" id="btn-fixall">Value ? rows with AI</button>
       <button class="btn" id="btn-export">Export file</button>
       <label class="btn filebtn"><input type="file" id="import-file" accept="application/json" hidden>Import file</label>
     </div>

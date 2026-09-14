@@ -228,3 +228,8 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .hint{font-size:.85rem;color:var(--muted);margin:0;line-height:1.45;padding:8px 10px;border:1px dashed var(--line-strong);border-radius:8px}
 .hint a{color:var(--accent-2)}
 #backup-state{font-size:.72rem}
+
+.syncwarn{margin:0;padding:10px 14px;border-radius:10px;border:1px solid var(--crit);background:var(--crit-bg);color:var(--crit);font-size:.85rem;line-height:1.4}
+
+.log li.review .l{cursor:pointer}
+.log li.review .l:active{color:var(--accent)}

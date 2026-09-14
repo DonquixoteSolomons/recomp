@@ -79,14 +79,20 @@ export async function allSettings() {
   return o;
 }
 
+// Neutral placeholders only — this file is public. Your own targets live in
+// settings on the phone (and in seed.json / backup.json in the private repo).
 export const DEFAULT_SETTINGS = {
-  protein_floor_g: "150", protein_ceiling_g: "160",
-  weight_lo_kg: "70", weight_hi_kg: "75",
-  provisional_kcal: "2350", recomp_deficit_kcal: "250",
-  creatine_start: "2026-08-22", creatine_settle_days: "28",
+  protein_floor_g: "120", protein_ceiling_g: "150",
+  weight_lo_kg: "", weight_hi_kg: "",              // empty = no bounds
+  provisional_kcal: "2000", recomp_deficit_kcal: "250",   // provisional = rest-day base; sessions add on top
+  burn_revl_move: "450", burn_revl_sweat: "500", burn_revl_perform: "350",
+  burn_run: "300", burn_swim: "250", burn_calves: "80", burn_lift: "250", burn_other: "200",
+  creatine_start: "", creatine_settle_days: "28",  // empty = no creatine window
   ai_model: "gemini-2.5-flash", ai_lookup: "auto",
   gh_repo: "", backup_auto: "1",
 };
+// Never written to backup.json — a backup must not carry the token that protects it.
+export const CREDENTIAL_KEYS = ["gh_token", "gemini_key"];
 export async function ensureDefaults() {
   const have = await allSettings();
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) if (!(k in have)) await setSetting(k, v);
@@ -98,13 +104,18 @@ export async function dump() {
   for (const s of Object.keys(STORES)) {
     out[s] = await all(s);
     if (s === "estimates") out[s] = out[s].map(({ thumb, ...rest }) => rest);   // thumbnails stay on the phone
+    if (s === "settings") out[s] = out[s].filter(r => !CREDENTIAL_KEYS.includes(r.key));
   }
   return out;
 }
+/** Replace every store from a backup. Credentials on this phone are kept. */
 export async function restore(data, { replace = true } = {}) {
+  const keep = [];
+  for (const k of CREDENTIAL_KEYS) { const v = await setting(k); if (v) keep.push({ key: k, value: v }); }
   for (const s of Object.keys(STORES)) {
     if (!Array.isArray(data[s])) continue;
     if (replace) await clear(s);
-    await bulkAdd(s, data[s]);
+    await bulkAdd(s, s === "settings" ? data[s].filter(r => !CREDENTIAL_KEYS.includes(r.key)) : data[s]);
   }
+  for (const r of keep) await put("settings", r);
 }

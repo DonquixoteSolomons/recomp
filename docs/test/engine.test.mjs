@@ -107,3 +107,47 @@ test("tables are consistent", () => {
   for (const q of QUICK) assert.ok(q.lo <= q.kcal && q.kcal <= q.hi, q.id);
   assert.equal(new Set(REFERENCE.map(r => r.id)).size, REFERENCE.length);
 });
+
+// ---- sessions: move calories between days, never inflate the week
+const B = { ...S, burn_revl_move: "450", burn_revl_sweat: "500", burn_other: "200", provisional_kcal: "2000" };
+const week = (start, kinds) => kinds.map((k, i) => ({ day: addDays(start, i), at: `${addDays(start, i)}T18:00`, kind: k })).filter(w => w.kind);
+
+test("measured: rest base = tdee minus the sessions actually logged", () => {
+  const { meals, body } = seed("2026-09-01", 21, 2400, 74, 0);
+  // 5 REVL Move sessions a week for 3 weeks = 15 x 450 over 21 days
+  const workouts = [];
+  for (let wk = 0; wk < 3; wk++) workouts.push(...week(addDays("2026-09-01", wk * 7), ["revl_move", "revl_move", "revl_move", "revl_move", "revl_move", null, null]));
+  const e = estimateExpenditure(meals, body, B, "2026-09-22", 21, workouts);
+  assert.equal(e.tdee, 2400);
+  assert.equal(e.sessions_in_window, 15);
+  assert.equal(e.session_avg, Math.round(15 * 450 / 21));      // 321
+  assert.equal(e.rest_base, 2400 - 321);
+  const rest = currentTarget(e, B, []);
+  const train = currentTarget(e, B, [{ kind: "revl_move" }]);
+  assert.equal(rest.target, 2400 - 321 - 250);
+  assert.equal(train.target, rest.target + 450);
+});
+
+test("a 5-day week and a 3-day week sum to the same measured expenditure", () => {
+  const { meals, body } = seed("2026-09-01", 21, 2400, 74, 0);
+  const workouts = [];
+  for (let wk = 0; wk < 3; wk++) workouts.push(...week(addDays("2026-09-01", wk * 7), ["revl_move", "revl_sweat", "revl_move", "revl_sweat", "revl_move", null, null]));
+  const e = estimateExpenditure(meals, body, B, "2026-09-22", 21, workouts);
+  const restT = currentTarget(e, B, []).target;
+  const sum = (kinds) => kinds.reduce((a, k) => a + currentTarget(e, B, k ? [{ kind: k }] : []).target, 0);
+  const five = sum(["revl_move", "revl_sweat", "revl_move", "revl_sweat", "revl_move", null, null]);
+  const three = sum(["revl_move", null, "revl_sweat", null, "revl_move", null, null]);
+  // the week you actually trained less, you are told to eat less — by exactly the sessions you skipped
+  assert.equal(five - three, 500 + 450);
+  // and a week trained like the measured window sums to 7 x (tdee - deficit): no inflation, no double count
+  assert.ok(Math.abs(five - 7 * (e.tdee - 250)) <= 7, `five=${five} vs ${7 * (e.tdee - 250)}`);
+  assert.ok(restT < e.tdee - 250);
+});
+
+test("provisional: rest base plus today's sessions, nothing assumed", () => {
+  const rest = currentTarget(null, B, []);
+  assert.equal(rest.source, "provisional"); assert.equal(rest.target, 2000);
+  assert.equal(currentTarget(null, B, [{ kind: "revl_move" }]).target, 2450);
+  assert.equal(currentTarget(null, B, [{ kind: "revl_move" }, { kind: "other" }]).target, 2650);
+  assert.equal(currentTarget(null, B, [{ kind: "unknown_kind" }]).target, 2200);   // falls back to burn_other
+});

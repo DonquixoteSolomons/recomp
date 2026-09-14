@@ -27,8 +27,17 @@ turned that database into `data-repo/seed.json` for the phone app.
 4. Actions tab → **Pull Renpho weigh-ins** → Run workflow. `body.json` appears
    with your whole scale history. It then runs itself at 07:05 SGT daily.
 5. GitHub → Settings → Developer settings → Personal access tokens →
-   **Fine-grained** → Generate: Repository access = only `recomp-data`,
-   Permissions → Contents = **Read and write**. Copy the token.
+   **Fine-grained tokens** → Generate new token:
+   - **Expiration:** pick the longest you're offered (custom, up to a year)
+     and note the date. When it lapses, backups and weigh-in pulls stop; the
+     app shows a red banner on the Today screen, so you'll know — but you
+     have to come back here and make a new one.
+   - **Repository access:** Only select repositories → `recomp-data`.
+   - **Permissions → Repository permissions:** the list starts nearly empty.
+     Click **+ Add permissions** (or the dropdown), find **Contents**, set it
+     to **Read and write**. Leave **Metadata** at the Read-only it forces on.
+     Nothing else — not Actions, not security advisories.
+   - Generate, copy the token now (it's shown once).
 
 ### 2. The app page
 
@@ -46,9 +55,15 @@ Google to improve their models.
 
 ### 4. On the phone
 
-1. Open your Pages URL in Chrome → menu → **Add to Home screen**.
+1. Open your Pages URL in Chrome → menu ⋮ → **Install app** (on some
+   versions: "Install and create shortcut" → **Install**). Choose *Install*,
+   not *Create shortcut* — a shortcut just opens Chrome; the installed app
+   runs full-screen and offline.
 2. ⚙ Settings: paste the Gemini key, the GitHub token, and `you/recomp-data`.
-3. Trend tab → **Import chat log** (once) → **Pull weigh-ins**.
+3. Trend tab → **Import chat log** (once — it also restores your targets:
+   protein floor, weight range, creatine start) → **Pull weigh-ins**.
+4. Check ⚙ once: the public source ships with placeholder targets; the
+   import overwrites them with yours, but confirm they look right.
 
 That's it. From then on: weigh in each morning (the workflow fetches it),
 photograph or describe what you eat, tap Add.
@@ -64,6 +79,25 @@ are flagged. If you name a venue, a Google-grounded lookup runs first and its
 notes are fed into the identification. "Refine" with a correction; "Add to
 log" when it's right.
 
+**The `?` rows from the chat import.** The parser could value ~half the chat
+entries (fixed foods, shakes); the rest show a `?` with 0 kcal. Tap any chat
+row to send its text to the estimator, then Add to log replaces it in place.
+Or Trend → **Value ? rows with AI** does them all from their text, paced under
+the free tier's rate limit (~7 s each). Days that were "incomplete" then count
+toward the expenditure estimate.
+
+**Sessions move calories between days; they never inflate the week.** Each
+logged workout raises *that day's* target by its estimated burn (per kind, in
+⚙ — REVL Move 450, Sweat 500, and so on; edit them). Before the engine has
+data, `provisional_kcal` is the **rest-day base** and sessions add on top.
+Once measured, the engine takes the sessions you actually logged in the
+window back out of the measured average to get a rest-day base, then adds
+each session back on the day it happens — so a 3-day week is told to eat
+less than a 5-day week by exactly the sessions skipped, and a week trained
+like the window sums to the measured expenditure. No session count is ever
+assumed; the only guess is the per-session burn, and getting that wrong only
+shifts calories between days.
+
 **Quick add** for the fixed set. **Shake calculator** with typed grams,
 selectable whey/milk products; add a new tub or carton with the ＋.
 
@@ -74,11 +108,21 @@ every load.
 the calorie band comes from your own intake vs. the least-squares slope of
 your weight — never a BMR × multiplier (the thing that double-counted REVL
 and produced the old 2,500 ceiling). Creatine settling days are excluded from
-the weight side. Until then the target is the `provisional_kcal` setting.
+the weight side. Until then the rest-day base is the `provisional_kcal` setting.
 
 **Backups.** Every change schedules a snapshot to `backup.json` in the private
-repo a minute later. Restore from it on a new phone with one tap. Export/import
-a file as a second option.
+repo a minute later. Restore from it on a new phone with one tap (after
+entering the token, which is deliberately *not* in the backup). Export/import
+a file as a second option. If GitHub rejects the token — expired, wrong
+permissions, wrong repo — a red banner appears on the Today screen and stays
+until the next successful sync.
+
+## Privacy note on this public repo
+
+Nothing personal is in the source: targets in `docs/js/db.js` are neutral
+placeholders, your real ones live in settings on the phone and in the private
+repo's `seed.json` / `backup.json`. `.gitignore` keeps `.env`, `data/`
+and the seed out of git.
 
 ## Layout
 

@@ -24,7 +24,14 @@ async function gh(path, { method = "GET", body = null } = {}) {
   });
   if (r.status === 404 && method === "GET") return null;
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`GitHub ${r.status}: ${j.message || r.statusText}`);
+  if (!r.ok) {
+    const why = r.status === 401 ? "token invalid or expired"
+      : r.status === 403 ? "token lacks Contents read/write on this repo (or rate-limited)"
+      : r.status === 404 ? "repo not found — check owner/name and that the token can see it"
+      : (j.message || r.statusText);
+    const e = new Error(`GitHub ${r.status}: ${why}`); e.status = r.status; e.auth = r.status === 401 || r.status === 403 || r.status === 404;
+    throw e;
+  }
   return j;
 }
 
@@ -72,8 +79,9 @@ export async function importSeedData(seed) {
   if (Array.isArray(s.workouts)) { await db.bulkAdd("workouts", s.workouts); workouts = s.workouts.length; }
   if (Array.isArray(s.body) && s.body.length) { await db.bulkAdd("body", s.body); body = s.body.length; }
   if (Array.isArray(s.products) && !(await db.all("products")).length) await db.bulkAdd("products", s.products);
-  const have = await db.allSettings();
-  for (const [k, v] of Object.entries(s.settings || {})) if (!(k in have) && k in db.DEFAULT_SETTINGS) await db.setSetting(k, v);
+  // the seed carries the person's real targets; they beat the public placeholders
+  for (const [k, v] of Object.entries(s.settings || {}))
+    if (k in db.DEFAULT_SETTINGS && !db.CREDENTIAL_KEYS.includes(k)) await db.setSetting(k, v);
   await db.setSetting("seed_imported", "1");
   return { ok: true, meals, workouts, body };
 }
