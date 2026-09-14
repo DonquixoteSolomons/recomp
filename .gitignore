@@ -1,0 +1,16 @@
+# Personal health data — never commit, never sync to cloud storage
+data/
+*.db
+*.db-journal
+*.json.bak
+export/
+
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# personal data staged for the private repo
+data-repo/seed.json
+data-repo/body.json
+data-repo/backup.json

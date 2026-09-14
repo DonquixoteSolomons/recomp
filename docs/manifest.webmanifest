@@ -1,0 +1,10 @@
+{
+  "name": "Recomp",
+  "short_name": "Recomp",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#161D1B",
+  "theme_color": "#161D1B",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

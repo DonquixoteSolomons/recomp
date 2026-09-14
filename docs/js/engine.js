@@ -1,0 +1,126 @@
+/* Adaptive expenditure engine. Pure functions over arrays — no DOM, no DB.
+
+   Never a formula. Expenditure is back-calculated from what happened:
+       tdee ≈ mean(logged intake) − (Δweight_kg × 7700) / days
+   Weight is smoothed with an EMA for display; the *rate* uses a least-squares
+   slope on raw readings (an EMA endpoint lags a steady drift by ~1/alpha days).
+   Days inside the creatine settling window are excluded from the weight side. */
+
+export const KCAL_PER_KG = 7700;
+export const EMA_ALPHA = 0.10;
+export const MIN_DAYS = 7;
+export const INCOMPLETE_KCAL = 1000;   // a day logged under this is a forgotten day, not a fast
+
+const dayOf = (d) => (d instanceof Date ? d : new Date(d + "T00:00:00"));
+const isoDay = (d) => d.toISOString().slice(0, 10);
+export const addDays = (iso, n) => { const d = dayOf(iso); d.setDate(d.getDate() + n); return isoDay(new Date(d.getTime() - d.getTimezoneOffset() * 60000)); };
+const daysBetween = (a, b) => Math.round((dayOf(b) - dayOf(a)) / 864e5);
+
+export function creatineWindow(settings) {
+  const start = settings.creatine_start;
+  if (!start) return null;
+  const settle = parseInt(settings.creatine_settle_days || "28", 10);
+  return [start, addDays(start, settle)];
+}
+
+/** body rows → one point per day: mean weight, EMA trend, mean body fat. */
+export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
+  const byDay = new Map();
+  for (const r of bodyRows) {
+    const b = byDay.get(r.day) || { w: [], bf: [] };
+    b.w.push(r.weight_kg); if (r.bodyfat_pct != null) b.bf.push(r.bodyfat_pct);
+    byDay.set(r.day, b);
+  }
+  const cw = creatineWindow(settings);
+  const out = []; let ema = null;
+  for (const day of [...byDay.keys()].sort()) {
+    const b = byDay.get(day);
+    const w = b.w.reduce((a, x) => a + x, 0) / b.w.length;
+    ema = ema == null ? w : ema + alpha * (w - ema);
+    out.push({ day, weight: Math.round(w * 100) / 100, trend: Math.round(ema * 100) / 100,
+      bodyfat: b.bf.length ? Math.round(b.bf.reduce((a, x) => a + x, 0) / b.bf.length * 10) / 10 : null,
+      creatine: !!(cw && day >= cw[0] && day <= cw[1]) });
+  }
+  return out;
+}
+
+export function dailyIntake(meals) {
+  const m = new Map();
+  for (const r of meals) {
+    const d = m.get(r.day) || { kcal: 0, lo: 0, hi: 0, protein: 0, n: 0 };
+    d.kcal += r.kcal; d.lo += r.kcal_lo; d.hi += r.kcal_hi; d.protein += r.protein_g; d.n++;
+    m.set(r.day, d);
+  }
+  return m;
+}
+
+function slopePerDay(points) {
+  if (points.length < 2) return 0;
+  const d0 = points[0].day;
+  const xs = points.map(p => daysBetween(d0, p.day)), ys = points.map(p => p.weight);
+  const n = xs.length, mx = xs.reduce((a, x) => a + x, 0) / n, my = ys.reduce((a, y) => a + y, 0) / n;
+  const sxx = xs.reduce((a, x) => a + (x - mx) ** 2, 0);
+  if (!sxx) return 0;
+  return xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / sxx;
+}
+
+const confidence = (n) => n < MIN_DAYS ? ["none", 0] : n < 14 ? ["low", 0.12] : n < 21 ? ["medium", 0.08] : ["good", 0.05];
+
+/** Estimate over the `window` days ending the day before `asOf`. */
+export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21) {
+  const end = addDays(asOf, -1), start = addDays(end, -(window - 1));
+  const deficit = parseFloat(settings.recomp_deficit_kcal || "250");
+  const intake = dailyIntake(meals.filter(m => m.day >= start && m.day <= end));
+  const good = [...intake.entries()].filter(([, v]) => v.kcal >= INCOMPLETE_KCAL);
+  const trend = weightTrend(bodyRows.filter(b => b.day >= start && b.day <= end), settings).filter(p => !p.creatine);
+
+  const base = { as_of: asOf, window_days: window, days_with_intake: good.length, intake_avg: null,
+    trend_start: null, trend_end: null, tdee: null, tdee_lo: null, tdee_hi: null, target: null, confidence: "none", note: "" };
+  if (good.length < MIN_DAYS) { base.note = `${good.length} usable days of intake; need ${MIN_DAYS}.`; return base; }
+  base.intake_avg = Math.round(good.reduce((a, [, v]) => a + v.kcal, 0) / good.length);
+  if (trend.length < 2) { base.note = "Not enough weigh-ins outside the creatine window to read a trend."; return base; }
+
+  const t0 = trend[0], t1 = trend[trend.length - 1];
+  const span = Math.max(1, daysBetween(t0.day, t1.day));
+  const deltaKg = slopePerDay(trend) * span;
+  const storedPerDay = deltaKg * KCAL_PER_KG / span;
+  const n = good.length;
+  const avg = good.reduce((a, [, v]) => a + v.kcal, 0) / n;
+  const avgLo = good.reduce((a, [, v]) => a + v.lo, 0) / n, avgHi = good.reduce((a, [, v]) => a + v.hi, 0) / n;
+  const tdee = avg - storedPerDay;
+  const [conf, band] = confidence(Math.min(n, span + 1));
+  Object.assign(base, {
+    trend_start: t0.trend, trend_end: t1.trend,
+    tdee: Math.round(tdee), tdee_lo: Math.round((avgLo - storedPerDay) * (1 - band)), tdee_hi: Math.round((avgHi - storedPerDay) * (1 + band)),
+    target: Math.round(tdee - deficit), confidence: conf,
+    note: `${n} days intake, trend ${t0.trend} to ${t1.trend} kg over ${span} d (${deltaKg >= 0 ? "+" : ""}${deltaKg.toFixed(2)} kg, ${storedPerDay >= 0 ? "+" : ""}${Math.round(storedPerDay)} kcal/d stored).`,
+  });
+  return base;
+}
+
+/** What today's calorie band should be, and where it came from. */
+export function currentTarget(estimate, settings) {
+  const provisional = parseFloat(settings.provisional_kcal || "2350");
+  const deficit = parseFloat(settings.recomp_deficit_kcal || "250");
+  if (!estimate || estimate.confidence === "none") {
+    return { source: "provisional", target: provisional, lo: provisional - 100, hi: provisional + 100, tdee: null, confidence: "none",
+      note: "Formula-free estimate needs about 7 logged days with weigh-ins. Until then this is a conservative guess." };
+  }
+  return { source: "measured", target: estimate.target, lo: estimate.tdee_lo - deficit, hi: estimate.tdee_hi - deficit,
+    tdee: estimate.tdee, confidence: estimate.confidence, as_of: estimate.as_of, note: estimate.note };
+}
+
+/** The question asked seven times in the chat, answered every time. */
+export function verdict(totals, hasMeals, settings, target) {
+  const pf = parseFloat(settings.protein_floor_g || "150"), pc = parseFloat(settings.protein_ceiling_g || "160");
+  const p = totals.protein, k = totals.kcal;
+  let protein, protein_msg, kcal, kcal_msg;
+  if (p < pf) { protein = "short"; protein_msg = `${Math.round(pf - p)}g short of the ${pf}g floor`; }
+  else if (p <= pc) { protein = "hit"; protein_msg = "protein floor hit"; }
+  else { protein = "over"; protein_msg = `${Math.round(p - pc)}g over the ${pc}g ceiling — not a problem`; }
+  if (!hasMeals) { kcal = "under"; kcal_msg = "nothing logged yet"; }
+  else if (k < target.lo) { kcal = "under"; kcal_msg = `${Math.round(target.lo - k)} under the band — fine if protein is hit`; }
+  else if (k <= target.hi) { kcal = "in"; kcal_msg = "calories in band"; }
+  else { kcal = "over"; kcal_msg = `${Math.round(k - target.hi)} over the band`; }
+  return { protein, protein_msg, kcal, kcal_msg, ok_to_end: hasMeals && protein !== "short" && kcal !== "over" };
+}
