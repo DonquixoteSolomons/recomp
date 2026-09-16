@@ -10,7 +10,9 @@
 import { REFERENCE, computeFromIdentification } from "./foods.js";
 
 const API = "https://generativelanguage.googleapis.com/v1beta/models";
-export const DEFAULT_MODEL = "gemini-2.5-flash";
+export const DEFAULT_MODEL = "gemini-3.6-flash";
+// models Google has closed to new keys; a stored setting naming one is migrated to DEFAULT_MODEL
+export const RETIRED_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
 const MAX_EDGE = 1280, THUMB_EDGE = 320;
 
 const REF_LINES = REFERENCE.map(r => `${r.id} | ${r.name} | ${r.portion}`).join("\n");
@@ -90,7 +92,11 @@ async function generate(apiKey, model, body) {
     const msg = j?.error?.message || r.statusText;
     if (r.status === 429) throw new Error("Gemini free-tier rate limit hit — wait a minute and try again. " + msg);
     if (r.status === 400 && /API key/i.test(msg)) throw new Error("Gemini rejected the API key. Check it in ⚙ Settings.");
-    throw new Error(`Gemini ${r.status}: ${msg}`);
+    const e = new Error(`Gemini ${r.status}: ${msg}`);
+    // "This model ... is no longer available ... use models/gemini-X" — carry the hint so the caller can switch
+    const hint = r.status === 404 && msg.match(/use models\/([\w.-]+)/i);
+    if (hint) e.suggestedModel = hint[1];
+    throw e;
   }
   const cand = j.candidates?.[0];
   if (!cand) throw new Error("Gemini returned no candidates" + (j.promptFeedback?.blockReason ? ` (blocked: ${j.promptFeedback.blockReason})` : ""));

@@ -88,7 +88,7 @@ export const DEFAULT_SETTINGS = {
   burn_revl_move: "450", burn_revl_sweat: "500", burn_revl_perform: "350",
   burn_run: "300", burn_swim: "250", burn_calves: "80", burn_lift: "250", burn_other: "200",
   creatine_start: "", creatine_settle_days: "28",  // empty = no creatine window
-  ai_model: "gemini-2.5-flash", ai_lookup: "auto",
+  ai_model: "gemini-3.6-flash", ai_lookup: "auto",
   gh_repo: "", backup_auto: "1",
 };
 // Never written to backup.json — a backup must not carry the token that protects it.

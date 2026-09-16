@@ -2,7 +2,7 @@
 import * as db from "./db.js";
 import { QUICK, QUICK_BY_ID, DEFAULT_PRODUCTS, shake } from "./foods.js";
 import * as eng from "./engine.js";
-import { estimate as runGemini, DEFAULT_MODEL } from "./estimate.js";
+import { estimate as runGemini, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -117,7 +117,7 @@ function render() {
       const partial = !r.needs_review && looksPartial(r);
       li.className = r.needs_review || partial ? "review" : "";
       if (r.source === "backfill" || r.source === "backfill-ai") li.title = "Tap to value this with AI";
-      const sub = [r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "photo" ? "estimated" : null, r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
+      const sub = [r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "backfill-est" ? "from chat · est." : r.source === "photo" ? "estimated" : null, r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
       li.innerHTML = `<span class="t">${time}</span><span class="l">${esc(r.label)}${sub ? `<small>${esc(sub)}</small>` : ""}</span><span class="n p">${fmt(r.protein_g, 0)}g</span><span class="n">${fmt(r.kcal)}</span><button class="x" aria-label="Delete">×</button>`;
       $(".x", li).onclick = async () => { await db.del("meals", r.id); toast("Removed"); changed(); };
       if (r.source === "backfill" || r.source === "backfill-ai") $(".l", li).onclick = () => startFix(r);
@@ -172,9 +172,17 @@ async function runEstimate(correction = null) {
   const share = parseFloat($("#est-share").value) || 1;
   $("#est-status").textContent = prior ? "refining…" : "estimating…"; $("#est-go").disabled = true;
   try {
-    const out = await runGemini({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL,
+    const args = { apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL,
       images: prior ? [] : state.estFiles, text, share, lookupMode: state.settings.ai_lookup || "auto",
-      prior, priorImages: prior ? prior.images : [] });
+      prior, priorImages: prior ? prior.images : [] };
+    let out;
+    try { out = await runGemini(args); }
+    catch (e) {
+      if (!e.suggestedModel) throw e;
+      await db.setSetting("ai_model", e.suggestedModel); state.settings.ai_model = e.suggestedModel;
+      toast(`Switched model to ${e.suggestedModel}`);
+      out = await runGemini({ ...args, model: e.suggestedModel });
+    }
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share, model: state.settings.ai_model || DEFAULT_MODEL,
       ident: out.ident, result: out.result, thumb: out.thumbs[0] || (prior?.thumb ?? null), notes: out.notes, usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
@@ -358,6 +366,12 @@ $("#btn-seed").onclick = (e) => guarded(e.target, async () => {
   dataMsg(r.ok ? `Imported ${r.meals} meals, ${r.workouts} workouts.` : r.error);
   await loadProducts(); await loadDay(); await loadTrend(); scheduleBackup();
 });
+$("#btn-chatfix").onclick = (e) => guarded(e.target, async () => {
+  dataMsg("Applying chat estimates…");
+  const r = await sync.applyChatFixes({ force: true });
+  dataMsg(r.ok ? `Valued ${r.valued} rows, removed ${r.deleted} non-meals (v${r.version}).` : r.error);
+  await loadDay(); scheduleBackup();
+});
 $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
   if (!state.settings.gemini_key) throw new Error("Add your Gemini key in ⚙ first.");
   const rows = (await db.all("meals")).filter(m => m.needs_review || looksPartial(m)).sort((a, b) => a.at.localeCompare(b.at));
@@ -444,8 +458,13 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     renderQuick(); await loadProducts(); await loadDay();
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
-    // once a day, quietly pick up new weigh-ins
+    // a stored model Google has since retired -> current default
+    if (RETIRED_MODELS.includes(state.settings.ai_model)) { await db.setSetting("ai_model", DEFAULT_MODEL); state.settings.ai_model = DEFAULT_MODEL; }
+    // once a day, quietly pick up new weigh-ins; chat estimates whenever a new version is in the repo
     const s = state.settings, today = todayStr();
+    if (s.gh_token && s.gh_repo) {
+      sync.applyChatFixes().then(async r => { if (r.ok && !r.skipped) { toast(`Chat rows valued: ${r.valued}`); await loadDay(); scheduleBackup(); } }).catch(() => {});
+    }
     if (s.gh_token && s.gh_repo && s.last_pull !== today) {
       sync.pullBody().then(async r => { if (r.ok) { await db.setSetting("last_pull", today); await syncOk(); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } } })
         .catch(e => syncFailed("Weigh-in pull", e));

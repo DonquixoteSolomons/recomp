@@ -18,3 +18,8 @@ Your data and the one automated job. Keep this repo **private**.
 
 The workflow runs at 07:05 Singapore time. Scheduled workflows pause after
 60 days without commits; the app's backups keep the repo active.
+
+- `chat_fixes.json` — values for the chat rows the parser couldn't read, and
+  deletions of rows that were never meals. The app applies it once on open
+  (or Trend → **Apply chat estimates**). Regenerate on the PC with
+  `tools/chat_fixes.py` if you ever re-import the chat.

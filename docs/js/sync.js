@@ -86,6 +86,30 @@ export async function importSeedData(seed) {
   return { ok: true, meals, workouts, body };
 }
 
+/** Apply chat_fixes.json (values for chat rows the parser could not read; deletions of
+    rows that were never meals). Keyed by day|original text, so ids don't matter. */
+const rawOf = (m) => { let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } } return d?.raw || m.label; };
+export async function applyChatFixes({ force = false } = {}) {
+  const got = await readJson("chat_fixes.json");
+  if (!got) return { ok: false, error: "chat_fixes.json not in the repo yet." };
+  const version = String(got.data.version || 1);
+  if (!force && (await db.setting("chatfix_version")) === version) return { ok: true, skipped: true, version };
+  const fixes = got.data.fixes || {};
+  let valued = 0, deleted = 0;
+  for (const m of await db.all("meals")) {
+    if (!/^backfill/.test(m.source || "")) continue;
+    const f = fixes[m.day + "|" + rawOf(m)];
+    if (!f) continue;
+    if (f === "delete") { await db.del("meals", m.id); deleted++; continue; }
+    let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = { raw: m.label }; } }
+    await db.put("meals", { ...m, label: f.label, kcal: f.kcal, kcal_lo: f.kcal_lo, kcal_hi: f.kcal_hi, protein_g: f.protein_g,
+      source: "backfill-est", needs_review: 0, detail: { ...(d || {}), chatfix: version } });
+    valued++;
+  }
+  await db.setSetting("chatfix_version", version);
+  return { ok: true, valued, deleted, version };
+}
+
 /** Push a full snapshot. Debounced auto-backup lives in app.js. */
 export async function pushBackup() {
   const snap = await db.dump();

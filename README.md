@@ -49,7 +49,9 @@ turned that database into `data-repo/seed.json` for the phone app.
 ### 3. Gemini key
 
 [aistudio.google.com/apikey](https://aistudio.google.com/apikey) → Create API
-key. Free tier, no card: ~1,500 requests/day on the Flash models, 500/day with
+key. The app uses `gemini-3.6-flash` (Google closed 2.5 Flash to new keys); if
+Google retires a model it names the replacement in the error, and the app
+switches to it automatically. Free tier, no card: ~1,500 requests/day on the Flash models, 500/day with
 search grounding. Note: free-tier prompts (your food photos) may be used by
 Google to improve their models.
 
@@ -82,8 +84,10 @@ log" when it's right.
 **The `?` rows from the chat import.** The parser could value ~half the chat
 entries (fixed foods, shakes); the rest show a `?` with 0 kcal. Tap any chat
 row to send its text to the estimator, then Add to log replaces it in place.
-Or Trend → **Value ? rows with AI** does them all from their text, paced under
-the free tier's rate limit (~7 s each). Days that were "incomplete" then count
+`data-repo/chat_fixes.json` carries hand-checked values for all of them, applied
+automatically once it's in the private repo (Trend → **Apply chat estimates** to
+re-run). For anything left, Trend → **Value ? rows with AI** does them from their
+text, paced under the free tier's rate limit (~7 s each). Days that were "incomplete" then count
 toward the expenditure estimate.
 
 **Sessions move calories between days; they never inflate the week.** Each
