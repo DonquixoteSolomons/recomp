@@ -72,54 +72,62 @@ photograph or describe what you eat, tap Add.
 
 ## What it does
 
+**Today** is your status and your log. Protein and calorie meters, the verdict
+("Fine to end the day here" / "Protein first"), then everything logged today,
+then a week card. Inputs come up from the bar at the bottom:
+
+- **Meal** — *Recent* chips are learned from your own log (frequency with
+  recency decay), one tap to repeat. **Camera**, **Gallery** (pick existing
+  photos), or **Label** (a nutrition panel → exact values, then how much you
+  had). Describe it, set your share (All / ½ / ⅓ / ¼), the time, **Estimate**.
+  Refine with a correction; Add to log. "Type it in" for the rare manual entry.
+- **Shake** — typed grams, product pickers, exact arithmetic. **＋ New tub or
+  carton** opens the product form with **Read the label**: photo → per-100ml
+  or per-gram values filled in.
+- **Workout** — classes and cardio (REVL Move/Sweat/Perform, Run, Swim) take
+  minutes, km, and kcal if your watch or Strava shows it — or **From
+  screenshot**, which reads those off a Strava/Garmin/REVL summary. A kcal
+  figure overrides the per-kind default. **Strength** takes exercise × sets
+  (kg × reps) and feeds the Lifts card.
+- **More** — weigh-in by hand, products, backup.
+
+Tap any logged row to **edit** it (label, numbers, time), **log it again**,
+value it with AI, or delete it.
+
 **Photo or description → estimate.** Gemini identifies the dish and its
 components and maps each to a row in the app's Singapore reference table
 (`docs/js/foods.js`, ~70 hawker dishes and components). The **app** does the
 arithmetic from that table — deterministic, same answer every time. The model
 only supplies its own figures for things the table doesn't know, and those
-are flagged. If you name a venue, a Google-grounded lookup runs first and its
-notes are fed into the identification. "Refine" with a correction; "Add to
-log" when it's right.
-
-**The `?` rows from the chat import.** The parser could value ~half the chat
-entries (fixed foods, shakes); the rest show a `?` with 0 kcal. Tap any chat
-row to send its text to the estimator, then Add to log replaces it in place.
-`data-repo/chat_fixes.json` carries hand-checked values for all of them, applied
-automatically once it's in the private repo (Trend → **Apply chat estimates** to
-re-run). For anything left, Trend → **Value ? rows with AI** does them from their
-text, paced under the free tier's rate limit (~7 s each). Days that were "incomplete" then count
-toward the expenditure estimate.
+are flagged. If you name a venue, a Google-grounded lookup runs first.
 
 **Sessions move calories between days; they never inflate the week.** Each
-logged workout raises *that day's* target by its estimated burn (per kind, in
-⚙ — REVL Move 450, Sweat 500, and so on; edit them). Before the engine has
-data, `provisional_kcal` is the **rest-day base** and sessions add on top.
-Once measured, the engine takes the sessions you actually logged in the
-window back out of the measured average to get a rest-day base, then adds
-each session back on the day it happens — so a 3-day week is told to eat
-less than a 5-day week by exactly the sessions skipped, and a week trained
-like the window sums to the measured expenditure. No session count is ever
-assumed; the only guess is the per-session burn, and getting that wrong only
-shifts calories between days.
+logged workout raises *that day's* target by its burn — measured kcal when you
+have it, else a per-kind default (⚙). Before the engine has data,
+`provisional_kcal` is the **rest-day base**. Once measured, the engine takes
+the sessions you actually logged in the window back out of the measured
+average to get a rest-day base, then adds each session back on the day it
+happens — a 3-day week is told to eat less than a 5-day week by exactly the
+sessions skipped. No session count is ever assumed.
 
-**Quick add** for the fixed set. **Shake calculator** with typed grams,
-selectable whey/milk products; add a new tub or carton with the ＋.
+**Expenditure without a formula.** After ~7 complete days with weigh-ins
+outside the creatine window, the calorie band comes from your own intake vs.
+the least-squares slope of your weight — never BMR × multiplier (the thing
+that double-counted REVL and produced the old 2,500 ceiling).
 
-**Verdict.** "Fine to end the day here" or "Protein first" — answered on
-every load.
+**Trend tab.** Weight readings, trend line, body-fat % (dashed), your target
+band, creatine settling window; the expenditure estimate; **Lifts** — best
+estimated 1RM per exercise against the 100 kg goals; data actions.
 
-**Expenditure without a formula.** After ~7 complete days with weigh-ins,
-the calorie band comes from your own intake vs. the least-squares slope of
-your weight — never a BMR × multiplier (the thing that double-counted REVL
-and produced the old 2,500 ceiling). Creatine settling days are excluded from
-the weight side. Until then the rest-day base is the `provisional_kcal` setting.
+**The chat import.** `data-repo/chat_fixes.json` carries hand-checked values
+for the rows the parser couldn't read, applied automatically. Anything still
+marked `?` can be valued by tapping the row or with **Value ? rows with AI**.
 
-**Backups.** Every change schedules a snapshot to `backup.json` in the private
-repo a minute later. Restore from it on a new phone with one tap (after
-entering the token, which is deliberately *not* in the backup). Export/import
-a file as a second option. If GitHub rejects the token — expired, wrong
-permissions, wrong repo — a red banner appears on the Today screen and stays
-until the next successful sync.
+**Backups.** Every change marks the data dirty; a snapshot goes to
+`backup.json` in the private repo a few seconds later, when the app is
+hidden, or on next open if it didn't get out. Restore on a new phone with one
+tap (after entering the token, which is deliberately *not* in the backup). If
+GitHub rejects the token, a red banner appears on Today until the next success.
 
 ## Privacy note on this public repo
 

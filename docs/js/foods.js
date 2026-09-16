@@ -171,3 +171,71 @@ export function computeFromIdentification(ident, share = 1) {
     model_share: Math.round(modelShare * 100) / 100,
   };
 }
+
+
+// ---- learned quick-add: what you actually repeat, most recent first
+const normLabel = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/[.,!]+$/, "").trim();
+/** Rank logged meals by frequency with recency decay. Shakes are excluded (they have their own sheet). */
+export function recentFoods(meals, today, n = 8) {
+  const score = new Map();
+  for (const m of meals) {
+    if (m.source === "shake" || /whey|shake/i.test(m.label || "") || !m.kcal) continue;
+    const k = normLabel(m.label); if (!k) continue;
+    const age = Math.max(0, (new Date(today) - new Date(m.day)) / 864e5);
+    const s = score.get(k) || { label: m.label, kcal: m.kcal, kcal_lo: m.kcal_lo, kcal_hi: m.kcal_hi, protein_g: m.protein_g, score: 0, last: "", n: 0 };
+    s.score += Math.pow(0.95, age); s.n++;
+    if (m.at > s.last) { s.last = m.at; s.label = m.label; s.kcal = m.kcal; s.kcal_lo = m.kcal_lo; s.kcal_hi = m.kcal_hi; s.protein_g = m.protein_g; }
+    score.set(k, s);
+  }
+  return [...score.values()].sort((a, b) => b.score - a.score).slice(0, n);
+}
+
+// ---- strength work
+export const EXERCISES = [
+  "Back squat", "Bench press", "Deadlift", "Overhead press", "Barbell row", "Pull-up",
+  "Calf raise (vest)", "Calf raise", "Romanian deadlift", "Lunge", "Dumbbell press", "Other",
+];
+export const GOAL_LIFTS = { "Back squat": 100, "Bench press": 100, "Deadlift": 100 };
+/** Epley estimated one-rep max. reps=1 returns the weight itself. */
+export const e1rm = (weight, reps) => (reps <= 1 ? weight : Math.round(weight * (1 + reps / 30) * 10) / 10);
+/** Per exercise: best estimated 1RM and when, plus the last session's top set. */
+export function liftProgress(workouts) {
+  const by = new Map();
+  for (const w of workouts) {
+    for (const s of (w.sets || [])) {
+      const ex = s.exercise || "Other", wt = parseFloat(s.weight) || 0, reps = parseInt(s.reps, 10) || 0;
+      if (!wt || !reps) continue;
+      const est = e1rm(wt, reps);
+      const p = by.get(ex) || { exercise: ex, best: 0, best_day: "", best_set: "", last_day: "", last_set: "", sessions: new Set() };
+      p.sessions.add(w.day);
+      if (est > p.best) { p.best = est; p.best_day = w.day; p.best_set = `${wt} kg × ${reps}`; }
+      if (w.day >= p.last_day) { p.last_day = w.day; p.last_set = `${wt} kg × ${reps}`; }
+      by.set(ex, p);
+    }
+  }
+  return [...by.values()].map(p => ({ ...p, sessions: p.sessions.size, goal: GOAL_LIFTS[p.exercise] || null }))
+    .sort((a, b) => (b.goal ? 1 : 0) - (a.goal ? 1 : 0) || b.best - a.best);
+}
+
+/** One-time cleanup of chat-imported rows the parser matched by pattern: their label is the
+    raw sentence; the method string (e.g. "kaya_set+yakult", "shake") says what it was. */
+export function cleanBackfillLabel(meal) {
+  let d = meal.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { return null; } }
+  const method = d?.method, raw = d?.raw || meal.label;
+  if (!method || method === "none" || method === "reply-delta") return null;
+  const parts = [];
+  for (const h of method.split("+")) {
+    if (h === "shake") {
+      const w = raw.match(/(\d{2,3})\s*g(?:ram)?s?\s*(?:of\s*)?whey/i), ml = raw.match(/(\d{2,3})\s*(?:ml|g)\s*(?:of\s*)?(?:meiji|marigold|fit)?\s*milk|milk\s*(\d{2,3})/i);
+      parts.push(`Shake: ${w ? w[1] : "?"}g whey, ${ml ? (ml[1] || ml[2]) : "?"}ml milk`);
+    } else if (h === "rokeby") parts.push("Rokeby protein milk 30g");
+    else if (/^yakult x(\d+)/.test(h)) parts.push(`Yakult ×${h.match(/x(\d+)/)[1]}`);
+    else if (h === "yakult") parts.push("Yakult");
+    else if (h === "kopi") parts.push("Kopi o peng");
+    else if (/^pau x(\d+)/.test(h)) parts.push(`Char siew pau ×${h.match(/x(\d+)/)[1]}`);
+    else if (/^greek/.test(h)) parts.push(`Greek yogurt ${h.replace("greek ", "")}`);
+    else if (/^coke/.test(h)) parts.push(`Coke ${h.replace("coke ", "")}`);
+    else if (QUICK_BY_ID[h]) parts.push(QUICK_BY_ID[h].label);
+  }
+  return parts.length ? parts.join(" + ") : null;
+}

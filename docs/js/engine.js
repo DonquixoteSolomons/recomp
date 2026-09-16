@@ -46,8 +46,29 @@ export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
 
 /** Estimated burn of one logged session, from settings (per workout kind). */
 export function sessionKcal(workout, settings) {
+  const measured = parseFloat(workout.kcal);
+  if (Number.isFinite(measured) && measured > 0) return measured;     // from a watch / Strava screenshot
   const v = parseFloat(settings["burn_" + workout.kind]);
   return Number.isFinite(v) ? v : parseFloat(settings.burn_other || "0") || 0;
+}
+
+/** Last 7 days at a glance. */
+export function weekSummary(meals, workouts, bodyRows, settings, asOf) {
+  const start = addDays(asOf, -6);
+  const intake = dailyIntake(meals.filter(m => m.day >= start && m.day <= asOf));
+  const pf = parseFloat(settings.protein_floor_g || "0");
+  const complete = [...intake.values()].filter(v => v.kcal >= INCOMPLETE_KCAL);
+  const proteinDays = [...intake.values()].filter(v => v.protein >= pf).length;
+  const sessions = workouts.filter(w => w.day >= start && w.day <= asOf);
+  const trend = weightTrend(bodyRows.filter(b => b.day >= addDays(start, -7) && b.day <= asOf), settings);
+  const t0 = trend.find(p => p.day >= start) || trend[0], t1 = trend.at(-1);
+  return {
+    days_logged: intake.size, complete_days: complete.length,
+    kcal_avg: complete.length ? Math.round(complete.reduce((a, v) => a + v.kcal, 0) / complete.length) : null,
+    protein_avg: intake.size ? Math.round([...intake.values()].reduce((a, v) => a + v.protein, 0) / intake.size) : null,
+    protein_days: proteinDays, sessions: sessions.length, session_kcal: Math.round(sessionsKcal(sessions, settings)),
+    weight_from: t0?.trend ?? null, weight_to: t1?.trend ?? null, bodyfat: t1?.bodyfat ?? null,
+  };
 }
 export const sessionsKcal = (workouts, settings) => workouts.reduce((a, w) => a + sessionKcal(w, settings), 0);
 

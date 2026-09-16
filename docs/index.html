@@ -34,7 +34,7 @@
 
   <section class="meters">
     <div class="meter">
-      <div class="meter-head"><span class="eyebrow">Protein</span><span class="mono"><b id="p-val">0</b> / <span id="p-range">150–160</span> g</span></div>
+      <div class="meter-head"><span class="eyebrow">Protein</span><span class="mono"><b id="p-val">0</b> / <span id="p-range">—</span> g</span></div>
       <div class="bar"><div class="fill" id="p-fill"></div><div class="tick" id="p-floor"></div><div class="tick" id="p-ceil"></div></div>
       <div class="meter-foot" id="p-foot"></div>
     </div>
@@ -47,94 +47,34 @@
 
   <section class="verdict" id="verdict"></section>
   <p class="syncwarn" id="sync-warn" hidden></p>
-
-  <section class="block est">
-    <div class="row between"><h2 class="eyebrow">Photo or description</h2><span class="mono muted" id="est-status"></span></div>
-    <p class="hint" id="est-hint" hidden>Needs a free Gemini key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>, then paste it in ⚙ Settings. No card, ~1,500 estimates a day.</p>
-    <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden>📷 Camera</label>
-      <label class="btn filebtn"><input type="file" id="est-gallery" accept="image/*" multiple hidden>🖼 Gallery</label>
-      <div class="thumbs" id="est-thumbs"></div>
-    </div>
-    <textarea id="est-text" class="text" rows="2" placeholder="What is it, where from, what you shared or skipped — e.g. “ayam penyet from Amigos Gangsa Road, didn't finish the rice”"></textarea>
-    <div class="row gap">
-      <label class="lbl small">my share <input class="num" id="est-share" type="number" min="0.05" max="1" step="0.05" value="1"></label>
-      <button class="btn primary grow" id="est-go">Estimate</button>
-    </div>
-    <p class="hint" id="est-fixing" hidden></p>
-    <div id="est-result" hidden></div>
-  </section>
-
-  <section class="block"><h2 class="eyebrow">Quick add</h2><div class="chips" id="quick"></div></section>
-
-  <section class="block shake">
-    <div class="row between"><h2 class="eyebrow">Shake</h2><span class="mono result" id="shake-result">—</span></div>
-    <div class="row gap">
-      <label class="lbl">whey g <input class="num" id="whey" type="number" min="0" max="200" step="1" value="44" inputmode="decimal"></label>
-      <label class="lbl">milk ml <input class="num" id="milk" type="number" min="0" max="1000" step="1" value="250" inputmode="decimal"></label>
-      <label class="lbl">creatine g <input class="num" id="creatine" type="number" min="0" max="20" step="1" value="6" inputmode="decimal"></label>
-    </div>
-    <div class="row gap">
-      <select id="whey-id" class="select" aria-label="Whey"></select>
-      <select id="milk-id" class="select" aria-label="Milk"></select>
-      <button class="btn" id="btn-product" title="Add a milk or whey">＋</button>
-    </div>
-    <button class="btn primary" id="btn-shake">Add shake</button>
-  </section>
-
-  <section class="block">
-    <h2 class="eyebrow">Workout</h2>
-    <div class="chips" id="workouts">
-      <button class="chip w" data-kind="revl_move">Move</button>
-      <button class="chip w" data-kind="revl_sweat">Sweat</button>
-      <button class="chip w" data-kind="revl_perform">Perform</button>
-      <button class="chip w" data-kind="calves">Calves</button>
-      <button class="chip w" data-kind="run">Run</button>
-      <button class="chip w" data-kind="lift">Lift</button>
-      <button class="chip w" data-kind="swim">Swim</button>
-    </div>
-    <p class="note">Each session raises today's target by its estimated burn (set per kind in ⚙). The week's total stays anchored to what the scale measures, so sessions move calories between days — they can't inflate the week.</p>
-  </section>
-
-  <details class="block">
-    <summary class="eyebrow">Manual entry</summary>
-    <form id="manual" class="form">
-      <input class="text" name="label" placeholder="What was it" required>
-      <div class="row gap">
-        <label class="lbl">kcal <input class="num" name="kcal" type="number" min="0" step="10" required></label>
-        <label class="lbl">protein g <input class="num" name="protein_g" type="number" min="0" step="1" required></label>
-        <label class="lbl">my share <input class="num" name="share_frac" type="number" min="0.05" max="1" step="0.05" value="1"></label>
-      </div>
-      <button class="btn" type="submit">Add</button>
-    </form>
-  </details>
+  <p class="hint" id="est-hint" hidden>Photo estimates need a free Gemini key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>, then ⚙ Settings.</p>
 
   <section class="block">
     <div class="row between"><h2 class="eyebrow">Log</h2><span class="mono muted" id="log-count"></span></div>
     <ul class="log" id="log"></ul>
+    <p class="note" id="log-hint">Tap a row to edit it, log it again, or remove it.</p>
   </section>
 
+  <section class="block" id="week"></section>
 </main>
 
 <!-- ============================================================ TREND -->
 <main id="view-trend" class="view" hidden>
-
   <section class="block">
     <div class="row between"><h2 class="eyebrow">Weight</h2><span class="mono muted" id="trend-latest"></span></div>
     <canvas id="chart" height="220"></canvas>
     <div class="legend mono">
       <span><i class="sw dot"></i>reading</span><span><i class="sw line"></i>trend</span>
+      <span><i class="sw line bf"></i>body fat %</span>
       <span><i class="sw band"></i><span id="legend-band">target range</span></span><span><i class="sw hatch"></i>creatine settling</span>
     </div>
   </section>
-
   <section class="block" id="expenditure"></section>
-
+  <section class="block" id="lifts"></section>
   <section class="block">
     <div class="row between"><h2 class="eyebrow">Data</h2><span class="mono muted" id="backup-state"></span></div>
     <div class="row gap wrap">
       <button class="btn" id="btn-pull">Pull weigh-ins</button>
-      <button class="btn" id="btn-weight">Log weight by hand</button>
       <button class="btn" id="btn-backup">Back up now</button>
       <button class="btn" id="btn-restore">Restore backup</button>
       <button class="btn" id="btn-seed">Import chat log</button>
@@ -145,31 +85,173 @@
     </div>
     <p class="mono muted" id="data-msg"></p>
   </section>
-
 </main>
 
-<dialog id="settings">
-  <form method="dialog" class="form" id="settings-form">
-    <h2>Settings</h2>
-    <div class="grid2" id="settings-fields"></div>
-    <div class="row gap end"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="save">Save</button></div>
-  </form>
+<!-- ============================================================ ACTION BAR -->
+<nav class="actionbar" id="actionbar">
+  <button data-sheet="meal"><span>📷</span>Meal</button>
+  <button data-sheet="shake"><span>🥤</span>Shake</button>
+  <button data-sheet="workout"><span>🏋</span>Workout</button>
+  <button data-sheet="more"><span>⋯</span>More</button>
+</nav>
+
+<!-- ============================================================ MEAL SHEET -->
+<dialog class="sheet" id="sheet-meal">
+  <div class="sheet-head"><h2>Meal</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <div id="recent-wrap">
+      <p class="eyebrow">Recent — one tap</p>
+      <div class="chips" id="recent"></div>
+    </div>
+    <div class="row gap">
+      <label class="btn filebtn"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden>📷 Camera</label>
+      <label class="btn filebtn"><input type="file" id="est-gallery" accept="image/*" multiple hidden>🖼 Gallery</label>
+      <label class="btn filebtn"><input type="file" id="est-label" accept="image/*" hidden>🏷 Label</label>
+    </div>
+    <div class="thumbs" id="est-thumbs"></div>
+    <textarea id="est-text" class="text" rows="2" placeholder="What is it, where from, what you shared or skipped — “ayam penyet from Amigos, didn't finish the rice”"></textarea>
+    <div class="row gap">
+      <div class="seg" id="est-share" role="radiogroup" aria-label="My share">
+        <button data-v="1" class="on">All</button><button data-v="0.5">½</button><button data-v="0.33">⅓</button><button data-v="0.25">¼</button>
+      </div>
+      <label class="lbl small">time <input class="num" id="est-time" type="time"></label>
+    </div>
+    <button class="btn primary" id="est-go">Estimate</button>
+    <p class="hint" id="est-fixing" hidden></p>
+    <p class="mono muted" id="est-status"></p>
+    <div id="est-result" hidden></div>
+    <details>
+      <summary class="eyebrow">Type it in</summary>
+      <form id="manual" class="form">
+        <input class="text" name="label" placeholder="What was it" required>
+        <div class="row gap">
+          <label class="lbl">kcal <input class="num" name="kcal" type="number" min="0" step="10" required inputmode="decimal"></label>
+          <label class="lbl">protein g <input class="num" name="protein_g" type="number" min="0" step="1" required inputmode="decimal"></label>
+        </div>
+        <button class="btn" type="submit">Add</button>
+      </form>
+    </details>
+  </div>
 </dialog>
 
+<!-- ============================================================ SHAKE SHEET -->
+<dialog class="sheet" id="sheet-shake">
+  <div class="sheet-head"><h2>Shake</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <div class="row between"><span class="mono muted">exact from the labels</span><span class="mono result" id="shake-result">—</span></div>
+    <div class="row gap">
+      <label class="lbl">whey g <input class="num" id="whey" type="number" min="0" max="200" step="1" value="44" inputmode="decimal"></label>
+      <label class="lbl">milk ml <input class="num" id="milk" type="number" min="0" max="1000" step="1" value="250" inputmode="decimal"></label>
+      <label class="lbl">creatine g <input class="num" id="creatine" type="number" min="0" max="20" step="1" value="6" inputmode="decimal"></label>
+    </div>
+    <div class="row gap">
+      <select id="whey-id" class="select" aria-label="Whey"></select>
+      <select id="milk-id" class="select" aria-label="Milk"></select>
+    </div>
+    <div class="row gap">
+      <label class="lbl small">time <input class="num" id="shake-time" type="time"></label>
+      <button class="btn" id="btn-product">＋ New tub or carton</button>
+    </div>
+    <button class="btn primary" id="btn-shake">Add shake</button>
+  </div>
+</dialog>
+
+<!-- ============================================================ WORKOUT SHEET -->
+<dialog class="sheet" id="sheet-workout">
+  <div class="sheet-head"><h2>Workout</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <div class="chips" id="wo-kinds">
+      <button class="chip w" data-kind="revl_move">REVL Move</button>
+      <button class="chip w" data-kind="revl_sweat">REVL Sweat</button>
+      <button class="chip w" data-kind="revl_perform">REVL Perform</button>
+      <button class="chip w" data-kind="run">Run</button>
+      <button class="chip w" data-kind="swim">Swim</button>
+      <button class="chip w" data-kind="lift">Strength</button>
+    </div>
+    <div id="wo-cardio">
+      <div class="row gap">
+        <label class="lbl">minutes <input class="num" id="wo-min" type="number" min="0" step="1" inputmode="decimal"></label>
+        <label class="lbl">km <input class="num" id="wo-km" type="number" min="0" step="0.01" inputmode="decimal"></label>
+        <label class="lbl">kcal <input class="num" id="wo-kcal" type="number" min="0" step="1" inputmode="decimal" placeholder="if shown"></label>
+      </div>
+      <div class="row gap">
+        <label class="btn filebtn"><input type="file" id="wo-shot" accept="image/*" hidden>📷 From screenshot</label>
+        <span class="mono muted" id="wo-shot-status"></span>
+      </div>
+      <p class="note" id="wo-burn-note"></p>
+    </div>
+    <div id="wo-strength" hidden>
+      <div class="row gap">
+        <select id="wo-exercise" class="select" aria-label="Exercise"></select>
+      </div>
+      <div id="wo-sets" class="sets"></div>
+      <div class="row gap">
+        <label class="lbl">kg <input class="num" id="wo-w" type="number" min="0" step="0.5" inputmode="decimal"></label>
+        <label class="lbl">reps <input class="num" id="wo-r" type="number" min="1" step="1" inputmode="numeric"></label>
+        <button class="btn" id="wo-addset">＋ set</button>
+      </div>
+      <p class="note">Sets are what track your 100/100/100. Calories for strength work use the per-kind default (small).</p>
+    </div>
+    <div class="row gap">
+      <input class="text grow" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
+      <label class="lbl small">time <input class="num" id="wo-time" type="time"></label>
+    </div>
+    <button class="btn primary" id="wo-log">Log workout</button>
+  </div>
+</dialog>
+
+<!-- ============================================================ MORE SHEET -->
+<dialog class="sheet" id="sheet-more">
+  <div class="sheet-head"><h2>More</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body">
+    <p class="eyebrow">Weigh-in by hand</p>
+    <div class="row gap">
+      <label class="lbl">kg <input class="num" id="bw-kg" type="number" min="30" max="200" step="0.05" inputmode="decimal"></label>
+      <label class="lbl">body fat % <input class="num" id="bw-bf" type="number" min="3" max="60" step="0.1" inputmode="decimal"></label>
+      <button class="btn" id="bw-log">Log</button>
+    </div>
+    <p class="note">Renpho weigh-ins arrive on their own each morning. Use this only when the scale isn't synced.</p>
+    <p class="eyebrow">Products</p>
+    <div class="row gap"><button class="btn" id="btn-product2">＋ New tub or carton</button></div>
+    <p class="eyebrow">Sync</p>
+    <div class="row gap"><button class="btn" id="btn-backup2">Back up now</button><span class="mono muted" id="backup-state2"></span></div>
+  </div>
+</dialog>
+
+<!-- ============================================================ ROW SHEET -->
+<dialog class="sheet" id="sheet-row">
+  <div class="sheet-head"><h2 id="row-title">Entry</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-body" id="row-body"></div>
+</dialog>
+
+<!-- ============================================================ PRODUCT -->
 <dialog id="product">
   <form method="dialog" class="form" id="product-form">
-    <h2>Add a milk or whey</h2>
-    <p class="note">Read the numbers off the label once. Milks are per 100 ml; whey is per gram of powder — 25 g protein in a 32 g scoop is 0.78 per g.</p>
+    <h2>New tub or carton</h2>
+    <div class="row gap">
+      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" hidden>🏷 Read the label</label>
+      <span class="mono muted" id="prod-status"></span>
+    </div>
+    <p class="note">Or type it: milks per 100 ml; whey per gram of powder — 25 g protein in a 32 g scoop is 0.78 per g.</p>
     <div class="row gap">
       <label class="lbl">kind <select class="select" name="kind" id="product-kind"><option value="milk">Milk</option><option value="whey">Whey</option></select></label>
       <label class="lbl grow">label <input class="text" name="label" placeholder="e.g. Meiji Fit, Optimum Gold Standard" required></label>
     </div>
     <div class="row gap">
-      <label class="lbl">kcal <span id="product-per">/100ml</span> <input class="num" name="kcal" type="number" min="0" step="0.1" required></label>
-      <label class="lbl">protein g <span id="product-per2">/100ml</span> <input class="num" name="protein_g" type="number" min="0" step="0.01" required></label>
+      <label class="lbl">kcal <span id="product-per">/100ml</span> <input class="num" name="kcal" type="number" min="0" step="0.01" required inputmode="decimal"></label>
+      <label class="lbl">protein g <span id="product-per2">/100ml</span> <input class="num" name="protein_g" type="number" min="0" step="0.001" required inputmode="decimal"></label>
     </div>
     <label class="check"><input type="checkbox" name="make_default" checked> make it the default</label>
-    <div class="row gap end"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="save">Save</button></div>
+    <div class="row gap end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
+  </form>
+</dialog>
+
+<!-- ============================================================ SETTINGS -->
+<dialog id="settings">
+  <form method="dialog" class="form" id="settings-form">
+    <h2>Settings</h2>
+    <div class="grid2" id="settings-fields"></div>
+    <div class="row gap end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
   </form>
 </dialog>
 

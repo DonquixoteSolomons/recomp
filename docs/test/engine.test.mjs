@@ -151,3 +151,57 @@ test("provisional: rest base plus today's sessions, nothing assumed", () => {
   assert.equal(currentTarget(null, B, [{ kind: "revl_move" }, { kind: "other" }]).target, 2650);
   assert.equal(currentTarget(null, B, [{ kind: "unknown_kind" }]).target, 2200);   // falls back to burn_other
 });
+
+// ---- v2: measured burn, recents, lifts, week summary
+import { recentFoods, e1rm, liftProgress } from "../js/foods.js";
+import { sessionKcal, weekSummary } from "../js/engine.js";
+
+test("measured kcal on a workout beats the per-kind default", () => {
+  assert.equal(sessionKcal({ kind: "run" }, B), 200);            // B has no burn_run -> other
+  assert.equal(sessionKcal({ kind: "run", kcal: 312 }, B), 312);
+  assert.equal(sessionKcal({ kind: "run", kcal: 0 }, B), 200);
+});
+
+test("recent foods: frequency with recency decay, shakes excluded, latest values win", () => {
+  const meals = [
+    { day: "2026-09-01", at: "2026-09-01T08:00", label: "Kaya toast set", kcal: 500, kcal_lo: 450, kcal_hi: 560, protein_g: 19, source: "quick" },
+    { day: "2026-09-10", at: "2026-09-10T08:00", label: "Kaya toast set", kcal: 520, kcal_lo: 470, kcal_hi: 580, protein_g: 20, source: "quick" },
+    { day: "2026-09-14", at: "2026-09-14T13:00", label: "Amigos lamb chop", kcal: 1200, kcal_lo: 1000, kcal_hi: 1400, protein_g: 60, source: "photo" },
+    { day: "2026-09-14", at: "2026-09-14T18:00", label: "Shake: 44g whey", kcal: 332, kcal_lo: 318, kcal_hi: 345, protein_g: 42, source: "shake" },
+    { day: "2026-08-01", at: "2026-08-01T18:00", label: "Old thing", kcal: 300, kcal_lo: 250, kcal_hi: 350, protein_g: 10, source: "manual" },
+  ];
+  const r = recentFoods(meals, "2026-09-15");
+  assert.equal(r[0].label, "Kaya toast set"); assert.equal(r[0].kcal, 520); assert.equal(r[0].n, 2);
+  assert.ok(!r.some(x => /Shake/.test(x.label)));
+  assert.ok(r.findIndex(x => x.label === "Old thing") > r.findIndex(x => x.label === "Amigos lamb chop"));
+});
+
+test("e1rm and lift progress", () => {
+  assert.equal(e1rm(100, 1), 100);
+  assert.equal(e1rm(90, 3), 99);
+  const p = liftProgress([
+    { day: "2026-09-04", kind: "lift", sets: [{ exercise: "Back squat", weight: 90, reps: 3 }, { exercise: "Back squat", weight: 80, reps: 5 }] },
+    { day: "2026-09-11", kind: "lift", sets: [{ exercise: "Back squat", weight: 85, reps: 5 }, { exercise: "Calf raise (vest)", weight: 10, reps: 20 }] },
+  ]);
+  const sq = p.find(x => x.exercise === "Back squat");
+  assert.equal(sq.best, 99.2); assert.equal(sq.best_day, "2026-09-11"); assert.equal(sq.best_set, "85 kg × 5"); assert.equal(sq.last_set, "85 kg × 5"); assert.equal(sq.goal, 100); assert.equal(sq.sessions, 2);
+  assert.equal(p[0].exercise, "Back squat");                      // goal lifts sort first
+});
+
+test("week summary", () => {
+  const { meals, body } = seed("2026-09-08", 7, 2400, 74, -0.02);
+  const w = [{ day: "2026-09-09", kind: "revl_move" }, { day: "2026-09-11", kind: "run", kcal: 300 }];
+  const s = weekSummary(meals, w, body, { ...B, protein_floor_g: "150" }, "2026-09-14");
+  assert.equal(s.complete_days, 7); assert.equal(s.kcal_avg, 2400); assert.equal(s.protein_days, 7);
+  assert.equal(s.sessions, 2); assert.equal(s.session_kcal, 750);
+  assert.ok(s.weight_to < s.weight_from);
+});
+
+import { cleanBackfillLabel } from "../js/foods.js";
+test("chat rows matched by pattern get clean labels", () => {
+  const raw = "Had 2 half boiled egg with white pepper and soy sauce, kaya butter toast of 2 white bread. And kopi peng. Also had a yakult";
+  assert.equal(cleanBackfillLabel({ label: raw, detail: JSON.stringify({ raw, method: "kaya_set+yakult" }) }), "Kaya toast set + Yakult");
+  assert.equal(cleanBackfillLabel({ label: "Had a shake of 304ml meiji milk 62g whey and 6g creatine.", detail: { raw: "Had a shake of 304ml meiji milk 62g whey and 6g creatine.", method: "shake" } }), "Shake: 62g whey, 304ml milk");
+  assert.equal(cleanBackfillLabel({ label: "x", detail: { raw: "x", method: "none" } }), null);
+  assert.equal(cleanBackfillLabel({ label: "Had 2 yakults", detail: { raw: "Had 2 yakults", method: "yakult x2" } }), "Yakult ×2");
+});

@@ -167,3 +167,51 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
   const result = computeFromIdentification(ident, share);
   return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), notes, usage };
 }
+
+
+// ------------------------------------------------------------ other readers
+async function extract(apiKey, model, blob, instruction, schema) {
+  if (!apiKey) throw new Error("No Gemini API key. Add your free key in ⚙ Settings.");
+  const img = await prepareImage(blob);
+  const { text } = await generate(apiKey, model, {
+    contents: [{ role: "user", parts: [{ inline_data: { mime_type: "image/jpeg", data: img.data } }, { text: instruction }] }],
+    generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1, maxOutputTokens: 800 },
+  });
+  return { data: JSON.parse(text), thumb: img.thumb };
+}
+
+const LABEL_SCHEMA = { type: "OBJECT", properties: {
+  product: { type: "STRING", description: "brand and product name as printed" },
+  kind: { type: "STRING", enum: ["milk", "whey", "food", "drink"] },
+  basis: { type: "STRING", enum: ["100ml", "100g", "serving"], description: "what the kcal/protein numbers below are per" },
+  serving_size: { type: "STRING", description: "as printed, e.g. '32 g (1 scoop)', '350 ml'" },
+  serving_g_or_ml: { type: "NUMBER", nullable: true },
+  kcal: { type: "NUMBER" }, protein_g: { type: "NUMBER" },
+  servings_per_pack: { type: "NUMBER", nullable: true },
+  confidence: { type: "STRING", enum: ["low", "medium", "high"] },
+}, required: ["product", "kind", "basis", "serving_size", "serving_g_or_ml", "kcal", "protein_g", "servings_per_pack", "confidence"] };
+
+/** Read a nutrition label. Returns per-100ml/100g values when printed, else per serving. */
+export async function readLabel({ apiKey, model = DEFAULT_MODEL, image }) {
+  return extract(apiKey, model, image,
+    "This is a food or drink package. Read the nutrition information panel exactly as printed. Prefer the per-100 ml or per-100 g column when it exists; otherwise give per-serving values and the serving size. Energy in kcal (convert from kJ if only kJ is printed: kJ / 4.184). If it is a milk, kind=milk; a protein powder, kind=whey; otherwise food or drink.",
+    LABEL_SCHEMA);
+}
+
+const WORKOUT_SCHEMA = { type: "OBJECT", properties: {
+  app: { type: "STRING", description: "which app the screenshot is from, e.g. Strava, Garmin, REVL, Apple Fitness, unknown" },
+  sport: { type: "STRING", description: "run, swim, ride, walk, HIIT, strength, class, other" },
+  title: { type: "STRING", nullable: true },
+  date: { type: "STRING", nullable: true, description: "YYYY-MM-DD if shown" },
+  duration_min: { type: "NUMBER", nullable: true }, distance_km: { type: "NUMBER", nullable: true },
+  calories: { type: "NUMBER", nullable: true }, avg_hr: { type: "NUMBER", nullable: true },
+  pace_or_speed: { type: "STRING", nullable: true },
+  confidence: { type: "STRING", enum: ["low", "medium", "high"] },
+}, required: ["app", "sport", "title", "date", "duration_min", "distance_km", "calories", "avg_hr", "pace_or_speed", "confidence"] };
+
+/** Read a workout summary screenshot (Strava, Garmin, REVL, ...). */
+export async function readWorkout({ apiKey, model = DEFAULT_MODEL, image }) {
+  return extract(apiKey, model, image,
+    "This is a screenshot of a workout summary from a fitness app. Extract exactly what is shown: duration in minutes, distance in km, calories (kcal), average heart rate, the date if visible, and which app it is. Do not estimate values that are not shown; leave them null.",
+    WORKOUT_SCHEMA);
+}
