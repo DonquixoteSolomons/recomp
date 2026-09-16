@@ -9,7 +9,8 @@ No server, no laptop, nothing to keep running, $0.
 
 - Data lives on the phone (IndexedDB) and is backed up to a private GitHub repo.
 - Photos go from your phone to Gemini's free tier with your own key.
-- Your Renpho weigh-ins are pulled nightly by a free GitHub Actions job.
+- Your Renpho weigh-ins are pulled by a free GitHub Actions job every 3 hours,
+  or on demand from the app.
 
 `app.py` and `recomp/` are the earlier laptop version (FastAPI + SQLite). They
 still work but are not the primary app any more; `tools/export_seed.py`
@@ -25,7 +26,8 @@ turned that database into `data-repo/seed.json` for the phone app.
 3. Repo → Settings → Secrets and variables → Actions → **New repository secret**:
    `RENPHO_EMAIL` and `RENPHO_PASSWORD` (your Renpho Health login).
 4. Actions tab → **Pull Renpho weigh-ins** → Run workflow. `body.json` appears
-   with your whole scale history. It then runs itself at 07:05 SGT daily.
+   with your whole scale history. It then runs itself **every 3 hours**, and
+   the app's *Pull weigh-ins* button asks it to run right now.
 5. GitHub → Settings → Developer settings → Personal access tokens →
    **Fine-grained tokens** → Generate new token:
    - **Expiration:** pick the longest you're offered (custom, up to a year)
@@ -34,9 +36,12 @@ turned that database into `data-repo/seed.json` for the phone app.
      have to come back here and make a new one.
    - **Repository access:** Only select repositories → `recomp-data`.
    - **Permissions → Repository permissions:** the list starts nearly empty.
-     Click **+ Add permissions** (or the dropdown), find **Contents**, set it
-     to **Read and write**. Leave **Metadata** at the Read-only it forces on.
-     Nothing else — not Actions, not security advisories.
+     Click **+ Add permissions** (or the dropdown) and set two:
+     **Contents → Read and write** (data), and **Actions → Read and write**
+     (lets *Pull weigh-ins* run the Renpho job on demand instead of waiting
+     for the schedule). Leave **Metadata** at the Read-only it forces on.
+     Nothing else. Without Actions the app still works — the button just
+     reads whatever the last scheduled run fetched.
    - Generate, copy the token now (it's shown once).
 
 ### 2. The app page
@@ -122,6 +127,12 @@ estimated 1RM per exercise against the 100 kg goals; data actions.
 **The chat import.** `data-repo/chat_fixes.json` carries hand-checked values
 for the rows the parser couldn't read, applied automatically. Anything still
 marked `?` can be valued by tapping the row or with **Value ? rows with AI**.
+
+**Weigh-ins.** The scale talks to Renpho's cloud, not to your phone, so a
+GitHub Actions job fetches it. It runs every 3 hours; *Pull weigh-ins* on the
+Trend tab dispatches it immediately and waits (~40 s) for the result. The Data
+section always shows how old the newest weigh-in is, so a stale number is
+never a mystery.
 
 **Backups.** Every change marks the data dirty; a snapshot goes to
 `backup.json` in the private repo a few seconds later, when the app is

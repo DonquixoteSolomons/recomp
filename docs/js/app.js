@@ -485,6 +485,15 @@ async function loadTrend() {
   const last = state.trend.points.at(-1);
   $("#trend-latest").textContent = last ? `${last.weight} kg · trend ${last.trend}` + (last.bodyfat != null ? ` · ${last.bodyfat}% fat` : "") : "no weigh-ins yet";
   $("#backup-state").textContent = s.last_backup ? "last backup " + new Date(s.last_backup).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "never backed up";
+  // how current the scale data is — answers "why isn't today's weigh-in here"
+  const lastBody = state.all.body.slice().sort((x, y) => x.at.localeCompare(y.at)).at(-1);
+  const el = $("#body-fresh");
+  if (lastBody) {
+    const days = Math.round((new Date(todayStr()) - new Date(lastBody.day)) / 864e5);
+    el.textContent = days === 0 ? `Latest weigh-in: today, ${lastBody.weight_kg} kg.`
+      : `Latest weigh-in: ${lastBody.day} (${days} day${days > 1 ? "s" : ""} ago), ${lastBody.weight_kg} kg. The Renpho job runs every 3 hours — Pull weigh-ins asks it to run now.`;
+    el.className = days >= 2 ? "note warn" : "note";
+  } else el.textContent = "";
 }
 function drawChart() {
   const c = $("#chart"), dpr = window.devicePixelRatio || 1, W = c.clientWidth || 320, H = 220;
@@ -538,7 +547,19 @@ function renderLifts() {
 // ------------------------------------------------------------ data actions
 const dataMsg = (m) => { $("#data-msg").textContent = m; };
 async function guarded(btn, fn) { btn.disabled = true; try { await fn(); await syncOk(); } catch (e) { dataMsg(e.message); if (e.auth) await syncFailed("GitHub", e); } finally { btn.disabled = false; } }
-$("#btn-pull").onclick = (e) => guarded(e.target, async () => { dataMsg("Pulling weigh-ins…"); const r = await sync.pullBody(); dataMsg(r.ok ? `${r.added} new of ${r.total}. Latest ${r.latest ? `${r.latest.weight_kg} kg on ${r.latest.day}` : "—"}.` : r.error); await loadTrend(); });
+$("#btn-pull").onclick = (e) => guarded(e.target, async () => {
+  // The scale only reaches GitHub when the Actions job runs, so ask it to run now.
+  let triggered = false;
+  try { const t = await sync.refreshFromRenpho({ onStatus: dataMsg }); triggered = true; if (!t.changed) dataMsg("Job ran — nothing new on the scale since last time."); }
+  catch (err) {
+    if (err.noActions) dataMsg("Can't trigger the job (token needs Actions: Read and write). Reading what's already there…");
+    else throw err;
+  }
+  const r = await sync.pullBody();
+  const tail = r.ok ? `${r.added} new of ${r.total}. Latest ${r.latest ? `${r.latest.weight_kg} kg on ${r.latest.day}` : "—"}.` : r.error;
+  dataMsg((triggered ? "" : "") + tail);
+  await loadTrend();
+});
 $("#btn-seed").onclick = (e) => guarded(e.target, async () => {
   if ((await db.setting("seed_imported")) === "1" && !confirm("Chat log already imported. Import again (duplicates)?")) return;
   dataMsg("Importing chat log…"); const r = await sync.importSeed({ force: true }); dataMsg(r.ok ? `Imported ${r.meals} meals, ${r.workouts} workouts.` : r.error);

@@ -2,7 +2,9 @@ name: Pull Renpho weigh-ins
 
 on:
   schedule:
-    - cron: "5 23 * * *"     # 07:05 Singapore, after the morning weigh-in
+    # every 3 hours: a weigh-in is never more than ~3 h from reaching the app,
+    # and the app can dispatch this workflow on demand from the Pull weigh-ins button
+    - cron: "5 */3 * * *"
   workflow_dispatch:         # and a Run button in the Actions tab
 
 permissions:

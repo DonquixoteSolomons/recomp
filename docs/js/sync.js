@@ -15,6 +15,25 @@ async function creds() {
   return { token, repo };
 }
 
+/** Any repo-scoped endpoint. `sub` is everything after /repos/{owner}/{repo}/ */
+async function ghApi(sub, { method = "GET", body = null } = {}) {
+  const { token, repo } = await creds();
+  const r = await fetch(`${API}/repos/${repo}/${sub}`, {
+    method, headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+      ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : null,
+  });
+  if (r.status === 204) return {};
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const why = r.status === 403 ? "the token can't do this — add Actions: Read and write to it, or wait for the scheduled run"
+      : r.status === 401 ? "token invalid or expired" : (j.message || r.statusText);
+    const e = new Error(`GitHub ${r.status}: ${why}`); e.status = r.status; e.auth = r.status === 401; e.noActions = r.status === 403 || r.status === 404;
+    throw e;
+  }
+  return j;
+}
+
 async function gh(path, { method = "GET", body = null } = {}) {
   const { token, repo } = await creds();
   const r = await fetch(`${API}/repos/${repo}/contents/${path}`, {
@@ -47,6 +66,31 @@ export async function writeJson(path, data, message) {
   const body = { message, content: utf8ToB64(JSON.stringify(data)) };
   if (existing?.sha) body.sha = existing.sha;
   return gh(path, { method: "PUT", body });
+}
+
+/** How old the weigh-in file is, and what the newest reading in it is. */
+export async function bodyFreshness() {
+  const got = await readJson("body.json");
+  if (!got) return null;
+  const last = got.data.at(-1);
+  return { last_at: last?.at || null, last_day: last?.day || null, count: got.data.length };
+}
+
+/** Ask the Actions workflow to run now, then wait for body.json to change.
+    Needs Actions: Read and write on the token; without it this throws with noActions
+    and the caller falls back to just reading whatever is already in the repo. */
+export async function refreshFromRenpho({ timeoutMs = 90000, onStatus = () => {} } = {}) {
+  const before = (await gh("body.json"))?.sha || null;
+  onStatus("asking GitHub to run the Renpho job…");
+  await ghApi("actions/workflows/renpho.yml/dispatches", { method: "POST", body: { ref: "main" } });
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    await new Promise(r => setTimeout(r, 6000));
+    onStatus(`running… ${Math.round((Date.now() - started) / 1000)}s`);
+    const now = (await gh("body.json"))?.sha || null;
+    if (now && now !== before) return { ok: true, changed: true };
+  }
+  return { ok: true, changed: false };     // ran, but nothing new on the scale
 }
 
 /** Merge body.json (Renpho) into the local body store. Returns counts. */
