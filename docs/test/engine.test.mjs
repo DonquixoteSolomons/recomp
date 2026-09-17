@@ -170,10 +170,12 @@ test("recent foods: frequency with recency decay, shakes excluded, latest values
     { day: "2026-09-14", at: "2026-09-14T18:00", label: "Shake: 44g whey", kcal: 332, kcal_lo: 318, kcal_hi: 345, protein_g: 42, source: "shake" },
     { day: "2026-08-01", at: "2026-08-01T18:00", label: "Old thing", kcal: 300, kcal_lo: 250, kcal_hi: 350, protein_g: 10, source: "manual" },
   ];
-  const r = recentFoods(meals, "2026-09-15");
+  const r = recentFoods(meals, "2026-09-15", 8, { minCount: 2 });
   assert.equal(r[0].label, "Kaya toast set"); assert.equal(r[0].kcal, 520); assert.equal(r[0].n, 2);
   assert.ok(!r.some(x => /Shake/.test(x.label)));
-  assert.ok(r.findIndex(x => x.label === "Old thing") > r.findIndex(x => x.label === "Amigos lamb chop"));
+  assert.equal(r.length, 1);                                                      // one-offs are not regulars
+  assert.equal(recentFoods(meals, "2026-09-15", 8, { minCount: 2, hidden: ["kaya toast set"] }).length, 0);   // hidden by the user
+  assert.equal(recentFoods(meals, "2026-09-15", 8, { minCount: 1 }).length, 3);
 });
 
 test("e1rm and lift progress", () => {

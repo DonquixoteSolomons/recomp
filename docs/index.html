@@ -106,7 +106,7 @@
   <div class="sheet-head"><h2>Meal</h2><button class="icon close" data-close aria-label="Close">×</button></div>
   <div class="sheet-body">
     <div id="recent-wrap">
-      <p class="eyebrow">Recent — one tap</p>
+      <div class="row between"><p class="eyebrow">Regulars — one tap</p><span class="mono muted">eaten 3+ times · × to hide</span></div>
       <div class="chips" id="recent"></div>
     </div>
     <div class="row gap">
@@ -117,10 +117,10 @@
     <div class="thumbs" id="est-thumbs"></div>
     <textarea id="est-text" class="text" rows="2" placeholder="What is it, where from, what you shared or skipped — “ayam penyet from Amigos, didn't finish the rice”"></textarea>
     <div class="row gap">
+      <span class="mono muted">my share</span>
       <div class="seg" id="est-share" role="radiogroup" aria-label="My share">
         <button data-v="1" class="on">All</button><button data-v="0.5">½</button><button data-v="0.33">⅓</button><button data-v="0.25">¼</button>
       </div>
-      <label class="lbl small">time <input class="num" id="est-time" type="time"></label>
     </div>
     <button class="btn primary" id="est-go">Estimate</button>
     <p class="hint" id="est-fixing" hidden></p>
@@ -154,10 +154,7 @@
       <select id="whey-id" class="select" aria-label="Whey"></select>
       <select id="milk-id" class="select" aria-label="Milk"></select>
     </div>
-    <div class="row gap">
-      <label class="lbl small">time <input class="num" id="shake-time" type="time"></label>
-      <button class="btn" id="btn-product">＋ New tub or carton</button>
-    </div>
+    <div class="row gap"><button class="btn" id="btn-product">＋ New tub or carton</button></div>
     <button class="btn primary" id="btn-shake">Add shake</button>
   </div>
 </dialog>
@@ -198,10 +195,7 @@
       </div>
       <p class="note">Sets are what track your 100/100/100. Calories for strength work use the per-kind default (small).</p>
     </div>
-    <div class="row gap">
-      <input class="text grow" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
-      <label class="lbl small">time <input class="num" id="wo-time" type="time"></label>
-    </div>
+    <input class="text" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
     <button class="btn primary" id="wo-log">Log workout</button>
   </div>
 </dialog>

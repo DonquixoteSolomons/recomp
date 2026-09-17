@@ -176,19 +176,20 @@ export function computeFromIdentification(ident, share = 1) {
 // ---- learned quick-add: what you actually repeat, most recent first
 const normLabel = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").replace(/[.,!]+$/, "").trim();
 /** Rank logged meals by frequency with recency decay. Shakes are excluded (they have their own sheet). */
-export function recentFoods(meals, today, n = 8) {
-  const score = new Map();
+export function recentFoods(meals, today, n = 8, { minCount = 3, hidden = [] } = {}) {
+  const score = new Map(), hide = new Set(hidden.map(normLabel));
   for (const m of meals) {
     if (m.source === "shake" || /whey|shake/i.test(m.label || "") || !m.kcal) continue;
-    const k = normLabel(m.label); if (!k) continue;
+    const k = normLabel(m.label); if (!k || hide.has(k)) continue;
     const age = Math.max(0, (new Date(today) - new Date(m.day)) / 864e5);
     const s = score.get(k) || { label: m.label, kcal: m.kcal, kcal_lo: m.kcal_lo, kcal_hi: m.kcal_hi, protein_g: m.protein_g, score: 0, last: "", n: 0 };
     s.score += Math.pow(0.95, age); s.n++;
     if (m.at > s.last) { s.last = m.at; s.label = m.label; s.kcal = m.kcal; s.kcal_lo = m.kcal_lo; s.kcal_hi = m.kcal_hi; s.protein_g = m.protein_g; }
     score.set(k, s);
   }
-  return [...score.values()].sort((a, b) => b.score - a.score).slice(0, n);
+  return [...score.values()].filter(s => s.n >= minCount).sort((a, b) => b.score - a.score).slice(0, n);
 }
+export const normFoodLabel = normLabel;
 
 // ---- strength work
 export const EXERCISES = [

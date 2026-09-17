@@ -1,7 +1,7 @@
 /* Recomp — phone UI. No server: IndexedDB for data, Gemini for photos, GitHub for durability.
    Today = status + log. Inputs live in bottom sheets opened from the action bar. */
 import * as db from "./db.js";
-import { DEFAULT_PRODUCTS, shake, recentFoods, EXERCISES, e1rm, liftProgress, cleanBackfillLabel } from "./foods.js";
+import { DEFAULT_PRODUCTS, shake, recentFoods, normFoodLabel, EXERCISES, e1rm, liftProgress, cleanBackfillLabel } from "./foods.js";
 import * as eng from "./engine.js";
 import { estimate as runGemini, readLabel, readWorkout, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
@@ -27,9 +27,9 @@ function toast(msg, ms = 1800) { const t = $("#toast"); t.textContent = msg; t.h
 const sheet = (name) => $(`#sheet-${name}`);
 function openSheet(name) {
   const d = sheet(name); if (!d.open) d.showModal();
-  if (name === "meal") { renderRecent(); $("#est-time").value = state.day === todayStr() ? nowHM() : "12:00"; }
-  if (name === "shake") { $("#shake-time").value = state.day === todayStr() ? nowHM() : "12:00"; previewShake(); }
-  if (name === "workout") { $("#wo-time").value = state.day === todayStr() ? nowHM() : "12:00"; renderWorkoutSheet(); }
+  if (name === "meal") renderRecent();
+  if (name === "shake") previewShake();
+  if (name === "workout") renderWorkoutSheet();
   if (name === "more") { $("#backup-state2").textContent = $("#backup-state").textContent; }
 }
 const closeSheets = () => $$("dialog.sheet").forEach(d => d.open && d.close());
@@ -160,15 +160,17 @@ async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, ven
 }
 
 // recents: what you actually repeat
+function hiddenRecents() { try { return JSON.parse(state.settings.recent_hidden || "[]"); } catch { return []; } }
 function renderRecent() {
   const wrap = $("#recent-wrap"), box = $("#recent"); box.innerHTML = "";
-  const list = recentFoods(state.all?.meals || [], todayStr(), 8);
+  const list = recentFoods(state.all?.meals || [], todayStr(), 8, { minCount: 3, hidden: hiddenRecents() });
   wrap.hidden = !list.length;
   for (const f of list) {
-    const b = document.createElement("button"); b.className = "chip";
-    b.innerHTML = `${esc(f.label)}<small>${fmt(f.protein_g, 0)}g · ${fmt(f.kcal)} kcal${f.n > 1 ? ` · ×${f.n}` : ""}</small>`;
-    b.onclick = async () => { b.disabled = true; await insertMeal({ label: f.label, kcal: f.kcal, lo: f.kcal_lo, hi: f.kcal_hi, protein: f.protein_g, source: "repeat", hm: $("#est-time").value }); toast(`Added ${f.label}`); closeSheets(); changed(); };
-    box.appendChild(b);
+    const w = document.createElement("div"); w.className = "rchip";
+    w.innerHTML = `<button class="chip">${esc(f.label)}<small>${fmt(f.protein_g, 0)}g · ${fmt(f.kcal)} kcal · ×${f.n}</small></button><button class="rx" aria-label="Hide">×</button>`;
+    w.querySelector(".chip").onclick = async (e) => { e.currentTarget.disabled = true; await insertMeal({ label: f.label, kcal: f.kcal, lo: f.kcal_lo, hi: f.kcal_hi, protein: f.protein_g, source: "repeat" }); toast(`Added ${f.label}`); closeSheets(); changed(); };
+    w.querySelector(".rx").onclick = async () => { const list = hiddenRecents(); list.push(normFoodLabel(f.label)); await db.setSetting("recent_hidden", JSON.stringify(list)); state.settings.recent_hidden = JSON.stringify(list); renderRecent(); toast("Hidden from regulars"); };
+    box.appendChild(w);
   }
 }
 
@@ -210,7 +212,7 @@ $("#est-label").addEventListener("change", async (e) => {
     $("#label-discard").onclick = resetEstimate;
     $("#label-add").onclick = async () => {
       const { kc, p, q } = calc();
-      await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: "label", share: 1, hm: $("#est-time").value, detail: { label: L } });
+      await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: "label", share: 1, detail: { label: L } });
       toast(`Added ${L.product}`); resetEstimate(); closeSheets(); changed();
     };
   } catch (err) { $("#est-status").textContent = ""; $("#est-result").hidden = false; $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't read the label.</b><small>${esc(err.message)}</small></div>`; }
@@ -237,7 +239,7 @@ async function runEstimate(correction = null) {
     const args = { apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, images: prior ? [] : state.estFiles, text, share: state.share,
       lookupMode: state.settings.ai_lookup || "auto", prior, priorImages: prior ? prior.images : [] };
     const out = await withModelFallback(() => runGemini({ ...args, model: state.settings.ai_model || DEFAULT_MODEL }));
-    const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor($("#est-time").value)) : atFor($("#est-time").value);
+    const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share: state.share, model: state.settings.ai_model || DEFAULT_MODEL, ident: out.ident, result: out.result,
       thumb: out.thumbs[0] || (prior?.thumb ?? null), notes: out.notes, usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
     row.id = await db.add("estimates", row);
@@ -273,7 +275,7 @@ function renderEstimate() {
   $("#est-add").onclick = async () => {
     let id = null;
     if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await valueRow(meal, r, e.id); id = meal.id; } }
-    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, hm: $("#est-time").value, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
+    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
     await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
     toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
   };
@@ -297,7 +299,7 @@ async function valueRow(meal, computed, estId) {
 $("#manual").onsubmit = async (e) => {
   e.preventDefault();
   const f = new FormData(e.target), kcal = +f.get("kcal");
-  await insertMeal({ label: String(f.get("label")).trim(), kcal, lo: kcal * 0.85, hi: kcal * 1.15, protein: +f.get("protein_g"), source: "manual", share: state.share, hm: $("#est-time").value });
+  await insertMeal({ label: String(f.get("label")).trim(), kcal, lo: kcal * 0.85, hi: kcal * 1.15, protein: +f.get("protein_g"), source: "manual", share: state.share });
   e.target.reset(); toast("Added"); closeSheets(); changed();
 };
 
@@ -369,7 +371,7 @@ function previewShake() {
 $("#btn-shake").onclick = async () => {
   const w = product($("#whey-id").value), m = product($("#milk-id").value); if (!w || !m) return toast("Pick a whey and a milk");
   const s = shake(+$("#whey").value || 0, +$("#milk").value || 0, w, m, +$("#creatine").value || 0);
-  await insertMeal({ label: s.label, kcal: s.kcal, lo: s.kcal_lo, hi: s.kcal_hi, protein: s.protein_g, source: "shake", hm: $("#shake-time").value, detail: { whey_g: +$("#whey").value, milk_ml: +$("#milk").value, whey_id: w.id, milk_id: m.id, breakdown: s.breakdown } });
+  await insertMeal({ label: s.label, kcal: s.kcal, lo: s.kcal_lo, hi: s.kcal_hi, protein: s.protein_g, source: "shake", detail: { whey_g: +$("#whey").value, milk_ml: +$("#milk").value, whey_id: w.id, milk_id: m.id, breakdown: s.breakdown } });
   toast("Shake added"); closeSheets(); changed();
 };
 const openProduct = () => { $("#product-form").reset(); $("#prod-status").textContent = ""; syncPer(); $("#product").showModal(); };
@@ -445,7 +447,7 @@ $("#wo-shot").addEventListener("change", async (e) => {
   } catch (err) { $("#wo-shot-status").textContent = err.message; }
 });
 $("#wo-log").onclick = async () => {
-  const kind = state.wo.kind, at = atFor($("#wo-time").value);
+  const kind = state.wo.kind, at = atFor();
   const row = { day: at.slice(0, 10), at, kind, detail: $("#wo-note").value.trim() || null, source: "manual" };
   if (kind === "lift") { if (!state.wo.sets.length) return toast("Add at least one set"); row.sets = state.wo.sets.slice(); }
   else {

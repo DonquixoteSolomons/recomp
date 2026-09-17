@@ -314,3 +314,8 @@ html,body{touch-action:manipulation}
 .weightchip{align-self:flex-start;text-align:left}
 .weightchip:active{background:var(--surface-2)}
 #chart-note,#bf-note{margin:0}
+
+.rchip{position:relative}
+.rchip .chip{width:100%;padding-right:30px}
+.rchip .rx{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:6px;color:var(--faint);font-size:1rem;display:grid;place-items:center}
+.rchip .rx:active{background:var(--crit-bg);color:var(--crit)}
