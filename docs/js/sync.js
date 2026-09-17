@@ -150,8 +150,23 @@ export async function applyChatFixes({ force = false } = {}) {
       source: "backfill-est", needs_review: 0, detail: { ...(d || {}), chatfix: version } });
     valued++;
   }
+  // additions: meals and workouts logged in the chat after the seed; idempotent on day + time + label / kind
+  let added = 0;
+  const have = new Set((await db.all("meals")).map(m => m.day + "|" + m.at.slice(11, 16) + "|" + m.label));
+  for (const r of got.data.adds || []) {
+    if (have.has(r.day + "|" + r.at.slice(11, 16) + "|" + r.label)) continue;
+    await db.add("meals", { day: r.day, at: r.at, label: r.label, kcal: r.kcal, kcal_lo: r.kcal_lo, kcal_hi: r.kcal_hi, protein_g: r.protein_g,
+      source: r.source || "backfill-est", share_frac: r.share_frac ?? 1, venue: r.venue ?? null, detail: r.detail || null, needs_review: 0 });
+    added++;
+  }
+  const haveW = new Set((await db.all("workouts")).map(w => w.day + "|" + w.kind));
+  for (const w of got.data.workouts_add || []) {
+    if (haveW.has(w.day + "|" + w.kind)) continue;
+    await db.add("workouts", { day: w.day, at: w.at, kind: w.kind, detail: w.detail ?? null, source: w.source || "backfill" });
+    added++;
+  }
   await db.setSetting("chatfix_version", version);
-  return { ok: true, valued, deleted, version };
+  return { ok: true, valued, deleted, added, version };
 }
 
 /** Push a full snapshot. Debounced auto-backup lives in app.js. */

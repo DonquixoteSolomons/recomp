@@ -565,7 +565,7 @@ $("#btn-seed").onclick = (e) => guarded(e.target, async () => {
   dataMsg("Importing chat log…"); const r = await sync.importSeed({ force: true }); dataMsg(r.ok ? `Imported ${r.meals} meals, ${r.workouts} workouts.` : r.error);
   await loadProducts(); await loadTrend(); await markDirty();
 });
-$("#btn-chatfix").onclick = (e) => guarded(e.target, async () => { dataMsg("Applying chat estimates…"); const r = await sync.applyChatFixes({ force: true }); dataMsg(r.ok ? `Valued ${r.valued} rows, removed ${r.deleted} non-meals (v${r.version}).` : r.error); await loadTrend(); await markDirty(); });
+$("#btn-chatfix").onclick = (e) => guarded(e.target, async () => { dataMsg("Applying chat estimates…"); const r = await sync.applyChatFixes({ force: true }); dataMsg(r.ok ? `Valued ${r.valued}, removed ${r.deleted}, added ${r.added || 0} (v${r.version}).` : r.error); await loadTrend(); await markDirty(); });
 $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
   if (!state.settings.gemini_key) throw new Error("Add your Gemini key in ⚙ first.");
   const rows = (await db.all("meals")).filter(m => m.needs_review || looksPartial(m)).sort((a, b) => a.at.localeCompare(b.at));
@@ -640,7 +640,7 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo) {
       if ((await db.setting("dirty")) === "1") flushBackup();                      // a backup that never got out last time
-      sync.applyChatFixes().then(async r => { if (r.ok && !r.skipped) { toast(`Chat rows valued: ${r.valued}`); await loadDay(); await markDirty(); } }).catch(() => {});
+      sync.applyChatFixes().then(async r => { if (r.ok && !r.skipped) { toast(`Chat: ${r.valued} valued, ${r.added || 0} added`); await loadDay(); await markDirty(); } }).catch(() => {});
       if (s.last_pull !== today) sync.pullBody().then(async r => { if (r.ok) { await db.setSetting("last_pull", today); await syncOk(); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } } }).catch(e => syncFailed("Weigh-in pull", e));
     }
   } catch (e) { toast("Startup failed: " + e.message, 6000); console.error(e); }

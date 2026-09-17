@@ -88,6 +88,32 @@ VALUES: dict[int, tuple[str, int, int, int, float]] = {
     152: ("French toast 4½ slices (share of 4-egg batter) + 4 bacon + coffee with milk", 800, 700, 900, 31),
 }
 
+# Rows logged in the chat AFTER the seed export (Sep 14 evening -> Sep 17). Added, not fixed.
+# Shakes are exact from the tub/carton constants (0.78 g protein & 3.9 kcal per g whey;
+# Meiji full cream 3.2 g & 64 kcal per 100 ml). Values with a displayed-calorie source say so.
+# (day, HH:MM, label, kcal, lo, hi, protein_g, raw)
+ADDS: list[tuple[str, str, str, int, int, int, float, str]] = [
+    ("2026-09-14", "18:07", "Shake: 65g whey, 303ml Meiji", 448, 430, 465, 60.4, "Had a shake of 303ml meiji milk, 65g whey and 6g creatine."),
+    ("2026-09-14", "22:22", "Salted fish fried rice + Cheers triple deck sandwich", 938, 820, 1050, 38.0, "Had salted fish fried rice and the sandwich"),
+    ("2026-09-14", "22:56", "Arla protein hazelnut latte pudding", 146, 140, 150, 20.0, "Had this as well"),
+    ("2026-09-15", "13:30", "Sakura Thai: rice, omelette slice, salted egg chicken, bagedil", 880, 780, 1000, 38.5, "New day. Had rice with a triangle omelette slice, salted egg chicken and bagadel from sakura thai, a malay/indo fusion shop near changi city point"),
+    ("2026-09-15", "17:50", "Luckin americano + Ultrabakes egg & ham sandwich + teh o peng", 565, 500, 640, 24.0, "Had a dark roast americano from luckin and this egg and ham sandwich from ultrabakes from chang city point along with a teh o peng."),
+    ("2026-09-15", "19:33", "Shake: 70g whey, 313ml Meiji", 473, 455, 490, 64.6, "Went for a revl move sprint session and had a shake of 313ml meiji milk and 70g whey and 8g creatine."),
+    ("2026-09-15", "20:14", "Rice 122g, fish sambal 182g, sothi with 2 tahu 111g", 692, 620, 780, 40.5, "172g of ricel, 182g of fish sambal, 111g of gravy(sothi) with 2 tahu. (didn't eat 50g of the rice)"),
+    ("2026-09-16", "14:18", "Kaya toast set", 500, 450, 560, 19.0, "New day. Had 2 half boiled eggs with white pepper snd soy sauce, 2 white bread toast(kaya and butter), and kopi o peng."),
+    ("2026-09-16", "14:26", "Luncheon meat 137g, spiced (oily) + 2 white bread", 620, 540, 720, 24.0, "Had 137g of canned luncheon meat with onion garlic and indian spices, curry leaves as well. Was on the oilier side. Had it with 2 white bread."),
+    ("2026-09-16", "15:53", "Shake: 72g whey, 252ml Meiji", 442, 425, 460, 64.3, "Had a shake of 252ml meiji milk 72g whey and 6g creatine."),
+    ("2026-09-16", "20:54", "Basil chicken rice with egg (343 displayed) + half mango sticky rice (221/2)", 453, 430, 480, 28.0, "Went for a revl move session. Also had these 2 only had half of the mango sticky rice. The shop had the calories displayed 343 calories for the basil chicken rice with egg and 221 calories for the mango sticky rice"),
+    ("2026-09-17", "14:14", "Arla protein hazelnut latte pudding", 146, 140, 150, 20.0, "Had this"),
+    ("2026-09-17", "14:16", "Kaya toast set", 500, 450, 560, 19.0, "New day. Had 2 half boiled eggs with white pepper snd soy sauce, 2 white bread toast(kaya and butter), and kopi o peng."),
+    ("2026-09-17", "14:20", "Rice 180g, 2 eggs in curry 205g, fried tahu 53g", 610, 540, 690, 28.1, "180g of rice, 205g of 2eggs and curry, 53g fried tahu."),
+]
+# (day, HH:MM, kind, detail)
+WORKOUT_ADDS: list[tuple[str, str, str, str | None]] = [
+    ("2026-09-15", "19:33", "revl_move", "sprint"),
+    ("2026-09-16", "20:54", "revl_move", None),
+]
+
 # rows that were questions, corrections or duplicates of the row above them
 DELETE: list[int] = [10, 14, 16, 18, 30, 39, 43, 52, 60, 69, 76, 95, 105, 113]
 
@@ -112,8 +138,29 @@ def main() -> int:
         fixes[key(r)] = "delete"
         conn.execute("DELETE FROM meals WHERE id=?", (rid,))
         n_del += 1
+    # additions: idempotent on (day, at, label)
+    adds, wadds, n_add = [], [], 0
+    for day, hm, label, kcal, lo, hi, protein, raw in ADDS:
+        at = f"{day}T{hm}+08:00"
+        adds.append(dict(day=day, at=at, label=label, kcal=kcal, kcal_lo=lo, kcal_hi=hi, protein_g=protein,
+                         source="backfill-est", share_frac=1.0, venue=None, needs_review=0, detail=dict(raw=raw, chatfix=2)))
+        if not conn.execute("SELECT 1 FROM meals WHERE day=? AND at=? AND label=?", (day, at, label)).fetchone():
+            conn.execute("INSERT INTO meals(day,at,label,kcal,kcal_lo,kcal_hi,protein_g,source,share_frac,detail,needs_review) "
+                         "VALUES(?,?,?,?,?,?,?,'backfill-est',1.0,?,0)", (day, at, label, kcal, lo, hi, protein, json.dumps(dict(raw=raw), ensure_ascii=False)))
+            n_add += 1
+    for day, hm, kind, detail in WORKOUT_ADDS:
+        at = f"{day}T{hm}+08:00"
+        wadds.append(dict(day=day, at=at, kind=kind, detail=detail, source="backfill"))
+        if not conn.execute("SELECT 1 FROM workouts WHERE day=? AND kind=?", (day, kind)).fetchone():
+            conn.execute("INSERT INTO workouts(day,at,kind,detail,source) VALUES(?,?,?,?,'backfill')", (day, at, kind, detail))
     conn.commit()
-    OUT.write_text(json.dumps(dict(version=1, fixes=fixes), ensure_ascii=False, indent=0), encoding="utf-8")
+    # keep deletion keys from the previous file: those rows are gone from SQLite but a re-imported seed could bring them back
+    if OUT.exists():
+        for k, v in json.loads(OUT.read_text(encoding="utf-8")).get("fixes", {}).items():
+            if v == "delete" and k not in fixes:
+                fixes[k] = "delete"
+    OUT.write_text(json.dumps(dict(version=2, fixes=fixes, adds=adds, workouts_add=wadds), ensure_ascii=False, indent=0), encoding="utf-8")
+    print(f"added {n_add} new meal rows to SQLite")
     left = conn.execute("SELECT COUNT(*) FROM meals WHERE needs_review=1").fetchone()[0]
     print(f"valued {n_val}, deleted {n_del}; {left} rows still flagged; wrote {OUT.name} ({len(fixes)} keys)")
     return 0
