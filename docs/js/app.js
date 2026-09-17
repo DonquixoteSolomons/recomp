@@ -484,6 +484,7 @@ async function loadTrend() {
   drawChart(); renderExpenditure(); renderLifts();
   const last = state.trend.points.at(-1);
   $("#trend-latest").textContent = last ? `${last.weight} kg · trend ${last.trend}` + (last.bodyfat != null ? ` · ${last.bodyfat}% fat` : "") : "no weigh-ins yet";
+  $("#btn-fixall").hidden = !state.all.meals.some(m => m.needs_review || looksPartial(m));
   $("#backup-state").textContent = s.last_backup ? "last backup " + new Date(s.last_backup).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "never backed up";
   // how current the scale data is — answers "why isn't today's weigh-in here"
   const lastBody = state.all.body.slice().sort((x, y) => x.at.localeCompare(y.at)).at(-1);
@@ -536,7 +537,8 @@ function renderExpenditure() {
 }
 function renderLifts() {
   const el = $("#lifts"), rows = liftProgress(state.all.workouts);
-  if (!rows.length) { el.innerHTML = `<h2 class="eyebrow">Lifts</h2><p class="note">Log strength work with sets (Workout → Strength) and your best estimated 1RM per exercise shows here, against the 100 kg goals.</p>`; return; }
+  el.hidden = !rows.length;
+  if (!rows.length) return;
   el.innerHTML = `<h2 class="eyebrow">Lifts</h2>` + rows.map(r => `<div class="lift">
     <div>${esc(r.exercise)}<small>best ${esc(r.best_set)} on ${r.best_day} · last ${esc(r.last_set)} · ${r.sessions} session${r.sessions > 1 ? "s" : ""}</small></div>
     <div class="mono"><b>${fmt(r.best, 1)}</b> <small>e1RM${r.goal ? ` / ${r.goal}` : ""}</small></div>
@@ -560,12 +562,6 @@ $("#btn-pull").onclick = (e) => guarded(e.target, async () => {
   dataMsg((triggered ? "" : "") + tail);
   await loadTrend();
 });
-$("#btn-seed").onclick = (e) => guarded(e.target, async () => {
-  if ((await db.setting("seed_imported")) === "1" && !confirm("Chat log already imported. Import again (duplicates)?")) return;
-  dataMsg("Importing chat log…"); const r = await sync.importSeed({ force: true }); dataMsg(r.ok ? `Imported ${r.meals} meals, ${r.workouts} workouts.` : r.error);
-  await loadProducts(); await loadTrend(); await markDirty();
-});
-$("#btn-chatfix").onclick = (e) => guarded(e.target, async () => { dataMsg("Applying chat estimates…"); const r = await sync.applyChatFixes({ force: true }); dataMsg(r.ok ? `Valued ${r.valued}, removed ${r.deleted}, added ${r.added || 0} (v${r.version}).` : r.error); await loadTrend(); await markDirty(); });
 $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
   if (!state.settings.gemini_key) throw new Error("Add your Gemini key in ⚙ first.");
   const rows = (await db.all("meals")).filter(m => m.needs_review || looksPartial(m)).sort((a, b) => a.at.localeCompare(b.at));

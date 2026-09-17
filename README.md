@@ -67,8 +67,8 @@ Google to improve their models.
    not *Create shortcut* — a shortcut just opens Chrome; the installed app
    runs full-screen and offline.
 2. ⚙ Settings: paste the Gemini key, the GitHub token, and `you/recomp-data`.
-3. Trend tab → **Import chat log** (once — it also restores your targets:
-   protein floor, weight range, creatine start) → **Pull weigh-ins**.
+3. Trend tab → **Advanced → Import file** with `seed.json` (once; it also
+   restores your targets) → **Fetch scale now**.
 4. Check ⚙ once: the public source ships with placeholder targets; the
    import overwrites them with yours, but confirm they look right.
 
@@ -121,12 +121,17 @@ the least-squares slope of your weight — never BMR × multiplier (the thing
 that double-counted REVL and produced the old 2,500 ceiling).
 
 **Trend tab.** Weight readings, trend line, body-fat % (dashed), your target
-band, creatine settling window; the expenditure estimate; **Lifts** — best
-estimated 1RM per exercise against the 100 kg goals; data actions.
+band, creatine settling window; the expenditure estimate; **Lifts** (appears
+once you've logged a strength set) — best estimated 1RM per exercise against
+the 100 kg goals; **Scale** — how old the newest weigh-in is and a *Fetch scale
+now* button. Backups, restore and file export live under *Advanced* because
+they run on their own or are for a new phone.
 
 **The chat import.** `data-repo/chat_fixes.json` carries hand-checked values
-for the rows the parser couldn't read, applied automatically. Anything still
-marked `?` can be valued by tapping the row or with **Value ? rows with AI**.
+and corrections for the imported rows, applied automatically whenever a new
+version lands in the private repo. Anything still marked `?` can be valued by
+tapping the row; a **Value ? rows with AI** button appears only while such rows
+exist.
 
 **Weigh-ins.** The scale talks to Renpho's cloud, not to your phone, so a
 GitHub Actions job fetches it. It runs every 3 hours; *Pull weigh-ins* on the

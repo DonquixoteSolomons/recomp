@@ -70,21 +70,25 @@
     </div>
   </section>
   <section class="block" id="expenditure"></section>
-  <section class="block" id="lifts"></section>
+  <section class="block" id="lifts" hidden></section>
   <section class="block">
-    <div class="row between"><h2 class="eyebrow">Data</h2><span class="mono muted" id="backup-state"></span></div>
-    <div class="row gap wrap">
-      <button class="btn" id="btn-pull">Pull weigh-ins</button>
-      <button class="btn" id="btn-backup">Back up now</button>
-      <button class="btn" id="btn-restore">Restore backup</button>
-      <button class="btn" id="btn-seed">Import chat log</button>
-      <button class="btn" id="btn-chatfix">Apply chat estimates</button>
-      <button class="btn" id="btn-fixall">Value ? rows with AI</button>
-      <button class="btn" id="btn-export">Export file</button>
-      <label class="btn filebtn"><input type="file" id="import-file" accept="application/json" hidden>Import file</label>
-    </div>
+    <div class="row between"><h2 class="eyebrow">Scale</h2><span class="mono muted" id="backup-state"></span></div>
     <p class="note" id="body-fresh"></p>
+    <div class="row gap wrap">
+      <button class="btn" id="btn-pull">Fetch scale now</button>
+      <button class="btn" id="btn-fixall" hidden>Value ? rows with AI</button>
+    </div>
     <p class="mono muted" id="data-msg"></p>
+    <details>
+      <summary class="eyebrow">Advanced</summary>
+      <p class="note">Backups happen on their own after every change. These are for a new phone or a manual copy.</p>
+      <div class="row gap wrap">
+        <button class="btn" id="btn-backup">Back up now</button>
+        <button class="btn" id="btn-restore">Restore from GitHub</button>
+        <button class="btn" id="btn-export">Export file</button>
+        <label class="btn filebtn"><input type="file" id="import-file" accept="application/json" hidden>Import file</label>
+      </div>
+    </details>
   </section>
 </main>
 
