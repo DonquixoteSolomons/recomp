@@ -216,3 +216,12 @@ test("a long gap restarts the trend instead of dragging months-old readings into
   assert.equal(pts[2].trend, 75.05);
   assert.ok(pts.at(-1).trend > 74.9, String(pts.at(-1).trend));
 });
+
+test("two weigh-ins on one morning: the later one is the day's reading, as in the Renpho app", () => {
+  const body = [
+    { day: "2026-09-17", at: "2026-09-17T10:14+08:00", weight_kg: 75.05, bodyfat_pct: 26.0 },
+    { day: "2026-09-17", at: "2026-09-17T10:28+08:00", weight_kg: 74.85, bodyfat_pct: 25.9 },
+  ];
+  const p = weightTrend(body, S).at(-1);
+  assert.equal(p.weight, 74.85); assert.equal(p.bodyfat, 25.9);
+});

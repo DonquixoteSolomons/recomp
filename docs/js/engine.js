@@ -24,12 +24,13 @@ export function creatineWindow(settings) {
   return [start, addDays(start, settle)];
 }
 
-/** body rows → one point per day: mean weight, EMA trend, mean body fat. */
+/** body rows → one point per day: the LAST reading of the day (a re-weigh replaces the first,
+    which is also what the Renpho app shows), an EMA trend, and that reading's body fat. */
 export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
   const byDay = new Map();
-  for (const r of bodyRows) {
+  for (const r of [...bodyRows].sort((x, y) => (x.at || "").localeCompare(y.at || ""))) {
     const b = byDay.get(r.day) || { w: [], bf: [] };
-    b.w.push(r.weight_kg); if (r.bodyfat_pct != null) b.bf.push(r.bodyfat_pct);
+    b.w = [r.weight_kg]; if (r.bodyfat_pct != null) b.bf = [r.bodyfat_pct];
     byDay.set(r.day, b);
   }
   const cw = creatineWindow(settings);
