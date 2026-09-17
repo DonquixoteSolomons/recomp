@@ -205,3 +205,14 @@ test("chat rows matched by pattern get clean labels", () => {
   assert.equal(cleanBackfillLabel({ label: "x", detail: { raw: "x", method: "none" } }), null);
   assert.equal(cleanBackfillLabel({ label: "Had 2 yakults", detail: { raw: "Had 2 yakults", method: "yakult x2" } }), "Yakult ×2");
 });
+
+test("a long gap restarts the trend instead of dragging months-old readings into it", () => {
+  const body = [
+    { day: "2026-04-28", at: "2026-04-28T07:00", weight_kg: 72.5 }, { day: "2026-04-29", at: "2026-04-29T07:00", weight_kg: 72.6 },
+    { day: "2026-09-09", at: "2026-09-09T07:00", weight_kg: 75.05 }, { day: "2026-09-15", at: "2026-09-15T07:00", weight_kg: 75.5 },
+    { day: "2026-09-16", at: "2026-09-16T07:00", weight_kg: 74.85 },
+  ];
+  const pts = weightTrend(body, S);
+  assert.equal(pts[2].trend, 75.05);
+  assert.ok(pts.at(-1).trend > 74.9, String(pts.at(-1).trend));
+});

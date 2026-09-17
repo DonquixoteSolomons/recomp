@@ -10,6 +10,7 @@ export const KCAL_PER_KG = 7700;
 export const EMA_ALPHA = 0.10;
 export const MIN_DAYS = 7;
 export const INCOMPLETE_KCAL = 1000;   // a day logged under this is a forgotten day, not a fast
+export const TREND_GAP_DAYS = 14;      // a gap longer than this restarts the trend at the next reading
 
 const dayOf = (d) => (d instanceof Date ? d : new Date(d + "T00:00:00"));
 const isoDay = (d) => d.toISOString().slice(0, 10);
@@ -32,11 +33,13 @@ export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
     byDay.set(r.day, b);
   }
   const cw = creatineWindow(settings);
-  const out = []; let ema = null;
+  const out = []; let ema = null, prevDay = null;
   for (const day of [...byDay.keys()].sort()) {
     const b = byDay.get(day);
     const w = b.w.reduce((a, x) => a + x, 0) / b.w.length;
+    if (prevDay && daysBetween(prevDay, day) > TREND_GAP_DAYS) ema = null;   // April readings must not shape September's trend
     ema = ema == null ? w : ema + alpha * (w - ema);
+    prevDay = day;
     out.push({ day, weight: Math.round(w * 100) / 100, trend: Math.round(ema * 100) / 100,
       bodyfat: b.bf.length ? Math.round(b.bf.reduce((a, x) => a + x, 0) / b.bf.length * 10) / 10 : null,
       creatine: !!(cw && day >= cw[0] && day <= cw[1]) });

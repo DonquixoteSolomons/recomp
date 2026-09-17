@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#161D1B">
 <title>Recomp</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -29,8 +29,8 @@
     <button class="icon" id="day-prev" aria-label="Previous day">‹</button>
     <button class="daylabel" id="day-label">—</button>
     <button class="icon" id="day-next" aria-label="Next day">›</button>
-    <div class="weightchip" id="weight-chip" hidden></div>
   </section>
+  <button class="weightchip" id="weight-chip" hidden></button>
 
   <section class="meters">
     <div class="meter">
@@ -62,12 +62,13 @@
 <main id="view-trend" class="view" hidden>
   <section class="block">
     <div class="row between"><h2 class="eyebrow">Weight</h2><span class="mono muted" id="trend-latest"></span></div>
-    <canvas id="chart" height="220"></canvas>
-    <div class="legend mono">
-      <span><i class="sw dot"></i>reading</span><span><i class="sw line"></i>trend</span>
-      <span><i class="sw line bf"></i>body fat %</span>
-      <span><i class="sw band"></i><span id="legend-band">target range</span></span><span><i class="sw hatch"></i>creatine settling</span>
-    </div>
+    <canvas id="chart" height="200"></canvas>
+    <p class="note" id="chart-note"></p>
+  </section>
+  <section class="block" id="bf-block" hidden>
+    <div class="row between"><h2 class="eyebrow">Body fat</h2><span class="mono muted" id="bf-latest"></span></div>
+    <canvas id="bfchart" height="140"></canvas>
+    <p class="note" id="bf-note"></p>
   </section>
   <section class="block" id="expenditure"></section>
   <section class="block" id="lifts" hidden></section>

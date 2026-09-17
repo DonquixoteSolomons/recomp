@@ -72,7 +72,7 @@ async function loadDay(day = state.day) {
   const exp = eng.estimateExpenditure(allMeals, allBody, s, todayStr(), 21, allWorkouts);
   const target = eng.currentTarget(exp, s, workouts);
   const v = eng.verdict(totals, meals.length > 0, s, target);
-  const trend = eng.weightTrend(allBody, s), latest = trend.at(-1) || null;
+  const trend = eng.weightTrend(allBody.filter(b => b.day >= eng.addDays(todayStr(), -120)), s), latest = trend.at(-1) || null;
   const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   const week = eng.weekSummary(allMeals, allWorkouts, allBody, s, todayStr());
   state.all = { meals: allMeals, workouts: allWorkouts, body: allBody };
@@ -97,8 +97,9 @@ function render() {
   const chip = $("#weight-chip");
   if (d.body) {
     chip.hidden = false; chip.className = "weightchip mono" + (d.body.out_of_bounds ? " oob" : "");
-    const arrow = d.body.trend > d.body.weight ? "↘" : d.body.trend < d.body.weight ? "↗" : "→";
-    chip.innerHTML = `${fmt(d.body.trend, 1)} kg ${arrow}` + (d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}%` : "") + (d.body.creatine ? ` <span class="cw">creatine</span>` : "");
+    const when = d.body.day === todayStr() ? "this morning" : d.body.day.slice(5).replace("-", "/");
+    chip.textContent = `${fmt(d.body.weight, 2)} kg` + (d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}% fat` : "") + ` · ${when}`;
+    chip.onclick = () => $(".tab")[1].click();
   } else chip.hidden = true;
 
   const t = d.totals, v = d.verdict, k = d.target;
@@ -480,10 +481,9 @@ async function loadTrend() {
   const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   state.trend = { points: eng.weightTrend(body.filter(b => b.day >= start), s), current: state.data.target,
     weight_lo: bounded ? wl : null, weight_hi: bounded ? wh : null, creatine_window: eng.creatineWindow(s) };
-  $("#legend-band").textContent = bounded ? `${wl}–${wh} target` : "target range (set in ⚙)";
   drawChart(); renderExpenditure(); renderLifts();
   const last = state.trend.points.at(-1);
-  $("#trend-latest").textContent = last ? `${last.weight} kg · trend ${last.trend}` + (last.bodyfat != null ? ` · ${last.bodyfat}% fat` : "") : "no weigh-ins yet";
+  $("#trend-latest").textContent = last ? fmt(last.weight, 2) + " kg" : "no weigh-ins yet";
   $("#btn-fixall").hidden = !state.all.meals.some(m => m.needs_review || looksPartial(m));
   $("#backup-state").textContent = s.last_backup ? "last backup " + new Date(s.last_backup).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "never backed up";
   // how current the scale data is — answers "why isn't today's weigh-in here"
@@ -496,35 +496,67 @@ async function loadTrend() {
     el.className = days >= 2 ? "note warn" : "note";
   } else el.textContent = "";
 }
-function drawChart() {
-  const c = $("#chart"), dpr = window.devicePixelRatio || 1, W = c.clientWidth || 320, H = 220;
+function setupCanvas(c, H) {
+  const dpr = window.devicePixelRatio || 1, W = c.clientWidth || 320;
   c.width = W * dpr; c.height = H * dpr;
   const ctx = c.getContext("2d"); ctx.scale(dpr, dpr);
-  const css = getComputedStyle(document.documentElement), col = (v) => css.getPropertyValue(v).trim();
+  const css = getComputedStyle(document.documentElement);
+  return { ctx, W, H, col: (v) => css.getPropertyValue(v).trim() };
+}
+/** One clear series: dots for readings, a line for the smoothed trend, optional target band, a few date ticks. */
+function drawSeries(c, H, pts, key, trendKey, opts) {
+  const { ctx, W, col } = setupCanvas(c, H);
   ctx.clearRect(0, 0, W, H);
-  const pts = state.trend.points;
-  if (!pts.length) { ctx.fillStyle = col("--faint"); ctx.font = "13px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText("No weigh-ins yet — pull from GitHub or log one under More", W / 2, H / 2); return; }
-  const pad = { l: 38, r: 34, t: 10, b: 22 }, day0 = new Date(pts[0].day), nDays = Math.max(7, (new Date() - day0) / 864e5);
-  const x = (d) => pad.l + ((new Date(d) - day0) / 864e5) / nDays * (W - pad.l - pad.r);
-  const ws = pts.flatMap(p => [p.weight, p.trend]).concat(state.trend.weight_lo != null ? [state.trend.weight_lo, state.trend.weight_hi] : []);
-  const ymin = Math.min(...ws) - 0.5, ymax = Math.max(...ws) + 0.5, y = (v) => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
-  if (state.trend.weight_lo != null) { ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.14; ctx.fillRect(pad.l, y(state.trend.weight_hi), W - pad.l - pad.r, y(state.trend.weight_lo) - y(state.trend.weight_hi)); ctx.globalAlpha = 1; }
-  const cw = state.trend.creatine_window;
-  if (cw) { const x0 = Math.max(pad.l, x(cw[0])), x1 = Math.min(W - pad.r, x(cw[1])); if (x1 > x0) { ctx.save(); ctx.beginPath(); ctx.rect(x0, pad.t, x1 - x0, H - pad.t - pad.b); ctx.clip(); ctx.strokeStyle = col("--faint"); ctx.globalAlpha = 0.5; for (let i = -H; i < W; i += 7) { ctx.beginPath(); ctx.moveTo(x0 + i, H); ctx.lineTo(x0 + i + H, 0); ctx.stroke(); } ctx.restore(); } }
-  ctx.font = "10px " + col("--mono"); ctx.fillStyle = col("--faint"); ctx.textAlign = "right"; ctx.strokeStyle = col("--line"); ctx.lineWidth = 1;
-  for (let v = Math.ceil(ymin); v <= ymax; v += 1) { ctx.beginPath(); ctx.moveTo(pad.l, y(v)); ctx.lineTo(W - pad.r, y(v)); ctx.stroke(); ctx.fillText(v, pad.l - 6, y(v) + 3); }
-  ctx.textAlign = "left"; ctx.fillText(pts[0].day.slice(5), pad.l, H - 6); ctx.textAlign = "right"; ctx.fillText(todayStr().slice(5), W - pad.r, H - 6);
-  // body fat on its own right-hand scale
-  const bf = pts.filter(p => p.bodyfat != null);
-  if (bf.length > 1) {
-    const bmin = Math.min(...bf.map(p => p.bodyfat)) - 1, bmax = Math.max(...bf.map(p => p.bodyfat)) + 1, yb = (v) => pad.t + (1 - (v - bmin) / (bmax - bmin)) * (H - pad.t - pad.b);
-    ctx.strokeStyle = col("--accent-2"); ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath();
-    bf.forEach((p, i) => i ? ctx.lineTo(x(p.day), yb(p.bodyfat)) : ctx.moveTo(x(p.day), yb(p.bodyfat))); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = col("--accent-2"); ctx.textAlign = "left"; ctx.fillText(`${bf.at(-1).bodyfat}%`, W - pad.r + 4, yb(bf.at(-1).bodyfat) + 3);
+  if (!pts.length) { ctx.fillStyle = col("--faint"); ctx.font = "13px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText(opts.empty, W / 2, H / 2); return; }
+  const pad = { l: 40, r: 48, t: 16, b: 24 };
+  const day0 = new Date(pts[0].day), day1 = new Date(todayStr()), span = Math.max(6, (day1 - day0) / 864e5);
+  const x = (d) => pad.l + ((new Date(d) - day0) / 864e5) / span * (W - pad.l - pad.r);
+  const vals = pts.flatMap(p => [p[key], trendKey ? p[trendKey] : p[key]]).concat(opts.band ? opts.band : []);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const room = Math.max(opts.minRange, (hi - lo) * 0.25); lo -= room; hi += room;
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  if (opts.band) {
+    ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.12; ctx.fillRect(pad.l, y(opts.band[1]), W - pad.l - pad.r, y(opts.band[0]) - y(opts.band[1])); ctx.globalAlpha = 1;
+    ctx.fillStyle = col("--ok"); ctx.font = "10px " + col("--mono"); ctx.textAlign = "left";
+    ctx.fillText(String(opts.band[1]), W - pad.r + 4, y(opts.band[1]) + 3); ctx.fillText(String(opts.band[0]), W - pad.r + 4, y(opts.band[0]) + 3);
   }
-  ctx.fillStyle = col("--ink"); ctx.globalAlpha = 0.55; for (const p of pts) { ctx.beginPath(); ctx.arc(x(p.day), y(p.weight), 2.5, 0, Math.PI * 2); ctx.fill(); } ctx.globalAlpha = 1;
-  ctx.strokeStyle = col("--accent"); ctx.lineWidth = 2.2; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(x(p.day), y(p.trend)) : ctx.moveTo(x(p.day), y(p.trend))); ctx.stroke();
-  const last = pts.at(-1); ctx.fillStyle = col("--accent"); ctx.beginPath(); ctx.arc(x(last.day), y(last.trend), 4, 0, Math.PI * 2); ctx.fill();
+  if (opts.creatine) {
+    const x0 = Math.max(pad.l, x(opts.creatine[0])), x1 = Math.min(W - pad.r, x(opts.creatine[1]));
+    if (x1 > x0) { ctx.strokeStyle = col("--faint"); ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x0, 6); ctx.lineTo(x1, 6); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = col("--faint"); ctx.font = "9px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText("creatine settling", (x0 + x1) / 2, 14); }
+  }
+  const step = opts.step; ctx.font = "10px " + col("--mono"); ctx.strokeStyle = col("--line"); ctx.lineWidth = 1; ctx.fillStyle = col("--faint"); ctx.textAlign = "right";
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) { ctx.beginPath(); ctx.moveTo(pad.l, y(v)); ctx.lineTo(W - pad.r, y(v)); ctx.stroke(); ctx.fillText(opts.fmt(v), pad.l - 6, y(v) + 3); }
+  ctx.textAlign = "left"; ctx.fillText(pts[0].day.slice(5).replace("-", "/"), pad.l, H - 6);
+  const mid = new Date((day0.getTime() + day1.getTime()) / 2).toLocaleDateString("en-CA", { timeZone: SGT });
+  ctx.textAlign = "center"; ctx.fillText(mid.slice(5).replace("-", "/"), (pad.l + W - pad.r) / 2, H - 6);
+  ctx.textAlign = "right"; ctx.fillText("today", W - pad.r, H - 6);
+  if (trendKey) { ctx.strokeStyle = col(opts.color); ctx.lineWidth = 2.2; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(x(p.day), y(p[trendKey])) : ctx.moveTo(x(p.day), y(p[trendKey]))); ctx.stroke(); }
+  ctx.fillStyle = col("--ink"); ctx.globalAlpha = 0.7;
+  for (const p of pts) { ctx.beginPath(); ctx.arc(x(p.day), y(p[key]), 3, 0, Math.PI * 2); ctx.fill(); } ctx.globalAlpha = 1;
+  const last = pts.at(-1), lv = trendKey ? last[trendKey] : last[key];
+  ctx.fillStyle = col(opts.color); ctx.beginPath(); ctx.arc(x(last.day), y(lv), 4.5, 0, Math.PI * 2); ctx.fill();
+  ctx.font = "11px " + col("--mono"); ctx.textAlign = "left"; ctx.fillText(opts.fmt(lv), x(last.day) + 8, y(lv) - 6);
+}
+function drawChart() {
+  const pts = state.trend.points, wl = state.trend.weight_lo, wh = state.trend.weight_hi;
+  drawSeries($("#chart"), 200, pts, "weight", "trend", { band: wl != null ? [wl, wh] : null, creatine: state.trend.creatine_window, step: 1, minRange: 1,
+    fmt: (v) => Number(v).toFixed(Math.abs(v % 1) > 0.01 ? 1 : 0), color: "--accent", empty: "No weigh-ins yet. Fetch scale now, or log one under More." });
+  const note = $("#chart-note");
+  if (pts.length >= 2) {
+    const a1 = pts.at(-1), a0 = pts.find(p => new Date(a1.day) - new Date(p.day) <= 7 * 864e5) || pts[0];
+    const dlt = a1.trend - a0.trend, dir = Math.abs(dlt) < 0.15 ? "flat" : dlt > 0 ? "up " + fmt(dlt, 1) + " kg" : "down " + fmt(-dlt, 1) + " kg";
+    note.textContent = "Dots are each weigh-in. The line is the smoothed trend and is the number to believe: single readings swing about 1 kg with water. Trend " + fmt(a1.trend, 1) + " kg, " + dir + " over the last week." + (wl != null ? " Green band is your " + wl + "–" + wh + " kg range." : "")
+      + (state.trend.creatine_window && a1.day <= state.trend.creatine_window[1] ? " Creatine is still settling, so some of this is water, not fat." : "");
+  } else note.textContent = pts.length ? "One reading so far. The trend needs a few mornings." : "";
+  const bf = pts.filter(p => p.bodyfat != null);
+  $("#bf-block").hidden = bf.length < 2;
+  if (bf.length >= 2) {
+    drawSeries($("#bfchart"), 140, bf, "bodyfat", null, { band: null, creatine: null, step: 0.5, minRange: 0.6, fmt: (v) => Number(v).toFixed(1) + "%", color: "--accent-2", empty: "" });
+    const b0 = bf[0], b1 = bf.at(-1);
+    $("#bf-latest").textContent = fmt(b1.bodyfat, 1) + "% · " + b1.day.slice(5).replace("-", "/");
+    $("#bf-note").textContent = "This is the recomp signal: weight can stay flat while this falls. " + fmt(b0.bodyfat, 1) + "% on " + b0.day.slice(5).replace("-", "/") + " to " + fmt(b1.bodyfat, 1) + "% now. Scale body-fat readings are noisy day to day; watch the direction over weeks.";
+  }
 }
 function renderExpenditure() {
   const cur = state.trend.current, el = $("#expenditure");

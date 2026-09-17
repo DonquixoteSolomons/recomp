@@ -309,3 +309,8 @@ input[type=time].num{width:100%;text-align:left;font-family:var(--mono)}
 .sw.bf{background:var(--accent-2)}
 
 .note.warn{color:var(--warn)}
+
+html,body{touch-action:manipulation}
+.weightchip{align-self:flex-start;text-align:left}
+.weightchip:active{background:var(--surface-2)}
+#chart-note,#bf-note{margin:0}
