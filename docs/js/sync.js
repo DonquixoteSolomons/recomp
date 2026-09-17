@@ -139,16 +139,27 @@ export async function applyChatFixes({ force = false } = {}) {
   const version = String(got.data.version || 1);
   if (!force && (await db.setting("chatfix_version")) === version) return { ok: true, skipped: true, version };
   const fixes = got.data.fixes || {};
-  let valued = 0, deleted = 0;
+  let valued = 0, deleted = 0, moved = 0;
   for (const m of await db.all("meals")) {
     if (!/^backfill/.test(m.source || "")) continue;
-    const f = fixes[m.day + "|" + rawOf(m)];
+    // keys: day|HH:MM|raw (v3, unambiguous) first, then the older day|raw
+    const raw = rawOf(m);
+    const f = fixes[m.day + "|" + m.at.slice(11, 16) + "|" + raw] ?? fixes[m.day + "|" + raw];
     if (!f) continue;
     if (f === "delete") { await db.del("meals", m.id); deleted++; continue; }
     let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = { raw: m.label }; } }
-    await db.put("meals", { ...m, label: f.label, kcal: f.kcal, kcal_lo: f.kcal_lo, kcal_hi: f.kcal_hi, protein_g: f.protein_g,
-      source: "backfill-est", needs_review: 0, detail: { ...(d || {}), chatfix: version } });
+    const row = { ...m, label: f.label, kcal: f.kcal, kcal_lo: f.kcal_lo, kcal_hi: f.kcal_hi, protein_g: f.protein_g,
+      source: "backfill-est", needs_review: 0, detail: { ...(d || {}), raw, chatfix: version } };
+    if (f.day && f.at) { row.day = f.day; row.at = f.at; moved++; }     // typed before "New day" -> previous evening
+    await db.put("meals", row);
     valued++;
+  }
+  // workouts: rows that were questions, or done the evening before they were typed
+  for (const w of got.data.workouts_fix || []) {
+    const hit = (await db.all("workouts")).find(x => x.day === w.day && x.kind === w.kind && x.at.slice(11, 16) === w.at.slice(11, 16));
+    if (!hit) continue;
+    if (w.action === "delete") { await db.del("workouts", hit.id); deleted++; }
+    else if (w.action === "move") { await db.put("workouts", { ...hit, day: w.to_day, at: w.to_at }); moved++; }
   }
   // additions: meals and workouts logged in the chat after the seed; idempotent on day + time + label / kind
   let added = 0;
@@ -166,7 +177,7 @@ export async function applyChatFixes({ force = false } = {}) {
     added++;
   }
   await db.setSetting("chatfix_version", version);
-  return { ok: true, valued, deleted, added, version };
+  return { ok: true, valued, deleted, added, moved, version };
 }
 
 /** Push a full snapshot. Debounced auto-backup lives in app.js. */

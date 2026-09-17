@@ -104,7 +104,7 @@ ADDS: list[tuple[str, str, str, int, int, int, float, str]] = [
     ("2026-09-16", "14:26", "Luncheon meat 137g, spiced (oily) + 2 white bread", 620, 540, 720, 24.0, "Had 137g of canned luncheon meat with onion garlic and indian spices, curry leaves as well. Was on the oilier side. Had it with 2 white bread."),
     ("2026-09-16", "15:53", "Shake: 72g whey, 252ml Meiji", 442, 425, 460, 64.3, "Had a shake of 252ml meiji milk 72g whey and 6g creatine."),
     ("2026-09-16", "20:54", "Basil chicken rice with egg (343 displayed) + half mango sticky rice (221/2)", 453, 430, 480, 28.0, "Went for a revl move session. Also had these 2 only had half of the mango sticky rice. The shop had the calories displayed 343 calories for the basil chicken rice with egg and 221 calories for the mango sticky rice"),
-    ("2026-09-17", "14:14", "Arla protein hazelnut latte pudding", 146, 140, 150, 20.0, "Had this"),
+    ("2026-09-16", "23:30", "Arla protein hazelnut latte pudding", 146, 140, 150, 20.0, "Had this"),   # typed 09-17 14:14 before "New day"
     ("2026-09-17", "14:16", "Kaya toast set", 500, 450, 560, 19.0, "New day. Had 2 half boiled eggs with white pepper snd soy sauce, 2 white bread toast(kaya and butter), and kopi o peng."),
     ("2026-09-17", "14:20", "Rice 180g, 2 eggs in curry 205g, fried tahu 53g", 610, 540, 690, 28.1, "180g of rice, 205g of 2eggs and curry, 53g fried tahu."),
 ]
@@ -114,17 +114,64 @@ WORKOUT_ADDS: list[tuple[str, str, str, str | None]] = [
     ("2026-09-16", "20:54", "revl_move", None),
 ]
 
+# ---------------------------------------------------------------- v3: audit against the original messages
+# id: fields to change. day/at present = the row moves (typed before "New day" = previous evening).
+EDITS: dict[int, dict] = {
+    1:   dict(label="McD breakfast wrap sausage meal + chicken muffin + Rokeby 30g + 3 boiled eggs & 4 bread egg mayo", kcal=1696, kcal_lo=1550, kcal_hi=1850, protein_g=98),
+    11:  dict(label="McD breakfast wrap sausage meal ($8.15) + chicken muffin", kcal=879, kcal_lo=820, kcal_hi=940, protein_g=38),
+    29:  dict(label="925 chicken rice ($8) + egg + teh peng less sweet + 10 cashews", kcal=1145, kcal_lo=1000, kcal_hi=1300, protein_g=57),
+    55:  dict(label="McD double cheeseburger + Chicken Samurai burger", kcal=990, kcal_lo=920, kcal_hi=1060, protein_g=50),
+    56:  dict(label="Tuna + 2 cheese + 4 bread + Shake: 34g whey, 257ml Fit milk", kcal=937, kcal_lo=850, kcal_hi=1030, protein_g=80.7),
+    64:  dict(label="Shake: 59g whey, 160ml Fit milk + 95ml Marigold", kcal=380, kcal_lo=365, kcal_hi=395, protein_g=54.5),
+    72:  dict(label="Cheesy tuna bread + ice lemon tea", kcal=440, kcal_lo=390, kcal_hi=500, protein_g=12),
+    78:  dict(label="Shake: 45g whey, 255ml milk", kcal=339, kcal_lo=325, kcal_hi=350, protein_g=43.3),
+    79:  dict(label="Coconut water 330ml", kcal=59, kcal_lo=50, kcal_hi=70, protein_g=0),          # same-day "Had this as well" x2 had collided
+    81:  dict(label="Chobani 15g protein Greek yogurt", kcal=93, kcal_lo=90, kcal_hi=100, protein_g=15.5),
+    82:  dict(label="McD Big Breakfast + hash brown + iced Milo + Sausage McMuffin", kcal=1180, kcal_lo=1080, kcal_hi=1280, protein_g=44.5),
+    96:  dict(label="Roasted chicken rice with egg + coconut water", kcal=785, kcal_lo=690, kcal_hi=880, protein_g=38),
+    117: dict(label="Kaya set (butter-sugar toast, coffee w/ condensed milk) + Shake: 48g whey, 251ml", kcal=848, kcal_lo=780, kcal_hi=920, protein_g=62.5),
+    123: dict(day="2026-09-06", at="2026-09-06T23:30+08:00"),                                          # Red Bull, typed 01:40 before "New day"
+    129: dict(label="Shake: 60g whey, 261ml Meiji", kcal=401, kcal_lo=385, kcal_hi=415, protein_g=55.2),
+    138: dict(label="Kaya toast set + Wok Hey $12.50 bowl", kcal=1200, kcal_lo=1050, kcal_hi=1350, protein_g=53),
+    143: dict(label="Shake: 69g whey, 301ml Meiji", kcal=462, kcal_lo=445, kcal_hi=480, protein_g=63.4),
+    146: dict(day="2026-09-12", at="2026-09-12T23:30+08:00"),                                          # 2 yakults, typed before "New day"
+    164: dict(day="2026-09-16", at="2026-09-16T23:30+08:00"),                                          # hazelnut pudding, typed before "New day"
+}
+DELETE_V3: list[int] = [36, 45, 100, 86]
+# Original day|HH:MM|raw of rows the laptop DB has already moved or deleted — the phone still has
+# them at these positions, so the fix file must be keyed here regardless of local DB state.
+ORIG_KEYS: dict[int, str] = {
+    36:  "2026-08-20|10:27|Had 2 soft boil eggs, with white pepper and soy sauce. Kaya butter toast of 2 bread and kopi o peng. Its a new day.",
+    45:  "2026-08-21|09:49|Had 2 half boiled eggs with white pepper and soy sauce. kaya butter toast bread, which is 2 white breads and one kopi o peng. Its a new day",
+    100: "2026-09-01|11:41|253ml milk, 44g whey, 6g creatine. And the previous input started a new day.",
+    86:  "2026-08-29|21:30|I had 35g of whey instead and a yakult",
+    123: "2026-09-07|01:40|Had a red bull can as well, the golden one",
+    146: "2026-09-13|13:26|Had 2 yakults",
+    164: "2026-09-17|14:14|Had this",
+}     # re-sent breakfasts (Aug 20, Aug 21, Sep 1) and a superseded shake (Aug 29 21:30)
+# meals missed entirely
+ADDS_V3: list[tuple[str, str, str, int, int, int, float, str]] = [
+    ("2026-08-17", "14:30", "Rasam with rice, green beans, half chicken breast + wing", 660, 560, 780, 48.0, "What I am eating for lunch. Rasam with rice and green beans. And a chicken in the top photo. Half a chicken breast and 1 wing together."),
+]
+# workouts: (id, action, to_day, to_at). The Sep 9 and Sep 11 "calves" rows came from questions, not sessions.
+WORKOUT_EDITS: list[tuple[int, str, str | None, str | None]] = [
+    (21, "delete", None, None),
+    (24, "delete", None, None),
+    (25, "move", "2026-09-11", "2026-09-11T23:20+08:00"),
+]
+
 # rows that were questions, corrections or duplicates of the row above them
 DELETE: list[int] = [10, 14, 16, 18, 30, 39, 43, 52, 60, 69, 76, 95, 105, 113]
 
 
 def main() -> int:
     conn = db.get_conn()
-    key = lambda r: f"{r['day']}|{(json.loads(r['detail']) if r['detail'] else {}).get('raw') or r['label']}"  # noqa: E731
+    raw_of = lambda r: (json.loads(r["detail"]) if r["detail"] else {}).get("raw") or r["label"]  # noqa: E731
+    key = lambda r: f"{r['day']}|{r['at'][11:16]}|{raw_of(r)}"  # noqa: E731
     fixes: dict[str, dict | str] = {}
     n_val = n_del = 0
     for rid, (label, kcal, lo, hi, protein) in VALUES.items():
-        r = conn.execute("SELECT id, day, label, detail FROM meals WHERE id=? AND source LIKE 'backfill%'", (rid,)).fetchone()
+        r = conn.execute("SELECT id, day, at, label, detail FROM meals WHERE id=? AND source LIKE 'backfill%'", (rid,)).fetchone()
         if not r:
             print(f"  ! row {rid} not found, skipped"); continue
         fixes[key(r)] = dict(label=label, kcal=kcal, kcal_lo=lo, kcal_hi=hi, protein_g=protein)
@@ -132,15 +179,40 @@ def main() -> int:
                      (label, kcal, lo, hi, protein, rid))
         n_val += 1
     for rid in DELETE:
-        r = conn.execute("SELECT id, day, label, detail FROM meals WHERE id=? AND source LIKE 'backfill%'", (rid,)).fetchone()
+        r = conn.execute("SELECT id, day, at, label, detail FROM meals WHERE id=? AND source LIKE 'backfill%'", (rid,)).fetchone()
         if not r:
             continue
         fixes[key(r)] = "delete"
         conn.execute("DELETE FROM meals WHERE id=?", (rid,))
         n_del += 1
+    # v3 edits: key by the row's original (day, time, raw) so the phone matches before it mutates
+    wfix = []
+    for rid, ch in EDITS.items():
+        r = conn.execute("SELECT id, day, at, label, kcal, kcal_lo, kcal_hi, protein_g, detail FROM meals WHERE id=?", (rid,)).fetchone()
+        if not r:
+            print(f"  ! edit {rid} not found"); continue
+        k = ORIG_KEYS.get(rid) or key(r)
+        v = dict(label=ch.get("label", r["label"]), kcal=ch.get("kcal", r["kcal"]), kcal_lo=ch.get("kcal_lo", r["kcal_lo"]),
+                 kcal_hi=ch.get("kcal_hi", r["kcal_hi"]), protein_g=ch.get("protein_g", r["protein_g"]))
+        if "day" in ch: v["day"], v["at"] = ch["day"], ch["at"]
+        fixes[k] = v
+        conn.execute("UPDATE meals SET label=?, kcal=?, kcal_lo=?, kcal_hi=?, protein_g=?, day=?, at=?, source='backfill-est', needs_review=0 WHERE id=?",
+                     (v["label"], v["kcal"], v["kcal_lo"], v["kcal_hi"], v["protein_g"], v.get("day", r["day"]), v.get("at", r["at"]), rid))
+    for rid in DELETE_V3:
+        fixes[ORIG_KEYS[rid]] = "delete"
+        conn.execute("DELETE FROM meals WHERE id=?", (rid,))
+    WORKOUT_ORIG = {21: ("2026-09-09", "2026-09-09T19:33+08:00", "lift"), 24: ("2026-09-11", "2026-09-11T19:35+08:00", "lift"), 25: ("2026-09-12", "2026-09-12T01:12+08:00", "lift")}
+    for wid, action, to_day, to_at in WORKOUT_EDITS:
+        day0, at0, kind0 = WORKOUT_ORIG[wid]
+        wfix.append(dict(day=day0, at=at0, kind=kind0, action=action, to_day=to_day, to_at=to_at))
+        w = conn.execute("SELECT id FROM workouts WHERE id=?", (wid,)).fetchone()
+        if not w:
+            continue
+        if action == "delete": conn.execute("DELETE FROM workouts WHERE id=?", (wid,))
+        else: conn.execute("UPDATE workouts SET day=?, at=? WHERE id=?", (to_day, to_at, wid))
     # additions: idempotent on (day, at, label)
     adds, wadds, n_add = [], [], 0
-    for day, hm, label, kcal, lo, hi, protein, raw in ADDS:
+    for day, hm, label, kcal, lo, hi, protein, raw in ADDS + ADDS_V3:
         at = f"{day}T{hm}+08:00"
         adds.append(dict(day=day, at=at, label=label, kcal=kcal, kcal_lo=lo, kcal_hi=hi, protein_g=protein,
                          source="backfill-est", share_frac=1.0, venue=None, needs_review=0, detail=dict(raw=raw, chatfix=2)))
@@ -159,7 +231,7 @@ def main() -> int:
         for k, v in json.loads(OUT.read_text(encoding="utf-8")).get("fixes", {}).items():
             if v == "delete" and k not in fixes:
                 fixes[k] = "delete"
-    OUT.write_text(json.dumps(dict(version=2, fixes=fixes, adds=adds, workouts_add=wadds), ensure_ascii=False, indent=0), encoding="utf-8")
+    OUT.write_text(json.dumps(dict(version=3, fixes=fixes, adds=adds, workouts_add=wadds, workouts_fix=wfix), ensure_ascii=False, indent=0), encoding="utf-8")
     print(f"added {n_add} new meal rows to SQLite")
     left = conn.execute("SELECT COUNT(*) FROM meals WHERE needs_review=1").fetchone()[0]
     print(f"valued {n_val}, deleted {n_del}; {left} rows still flagged; wrote {OUT.name} ({len(fixes)} keys)")
