@@ -104,7 +104,10 @@ components and maps each to a row in the app's Singapore reference table
 (`docs/js/foods.js`, ~70 hawker dishes and components). The **app** does the
 arithmetic from that table — deterministic, same answer every time. The model
 only supplies its own figures for things the table doesn't know, and those
-are flagged. If you name a venue, a Google-grounded lookup runs first.
+are flagged. Name the venue and the model uses the published figures it knows
+for chains; Google-grounded search is not on the free tier for the 3.x models.
+Free-tier quotas are per model per day: when one is used up the app tries the
+next Flash model, and it waits out a per-minute limit on its own.
 
 **Sessions move calories between days; they never inflate the week.** Each
 logged workout raises *that day's* target by its burn — measured kcal when you
@@ -160,10 +163,10 @@ docs/               the phone app (GitHub Pages)
   js/db.js          IndexedDB layer + settings + dump/restore
   js/foods.js       quick-add, reference table, products, shake(), computeFromIdentification()
   js/engine.js      weight trend (EMA display, OLS rate) + expenditure + verdict
-  js/estimate.js    Gemini: optional grounded lookup, then structured identification
+  js/estimate.js    Gemini: one structured identification call, free-tier limit handling
   js/sync.js        GitHub Contents API: body.json, seed.json, backup.json
   js/app.js         UI
-  test/             node --test docs/test/engine.test.mjs
+  test/             node --test "docs/test/*.test.mjs"
 data-repo/          template for the private repo (workflow + renpho_pull.py + seed.json)
 tools/export_seed.py  SQLite → seed.json
 app.py, recomp/, static/, tests/   the laptop version (optional)

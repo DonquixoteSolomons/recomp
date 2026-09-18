@@ -1,11 +1,13 @@
 /* Photo / text -> identification via Gemini (free tier), numbers via the reference table.
 
-   Two calls at most:
-     1. optional lookup with Google Search grounding when a venue is named — plain text notes
-     2. the structured identification call — JSON schema, no tools (Gemini does not allow
-        tools together with a response schema)
+   One structured call: JSON schema, no tools. Google Search grounding is "not available" on
+   the free tier for the 3.x Flash models (ai.google.dev/gemini-api/docs/pricing), so venue
+   figures come from what the model already knows about published chain nutrition, flagged.
    The model never does arithmetic that matters: it maps components to reference ids and
-   quantities; foods.computeFromIdentification does the sums. */
+   quantities; foods.computeFromIdentification does the sums.
+
+   Free-tier quotas are per model per day (reset midnight Pacific) and per minute. callModel()
+   waits out a per-minute limit once, and moves to the next model when a day is used up. */
 
 import { REFERENCE, computeFromIdentification } from "./foods.js";
 
@@ -13,6 +15,9 @@ const API = "https://generativelanguage.googleapis.com/v1beta/models";
 export const DEFAULT_MODEL = "gemini-3.6-flash";
 // models Google has closed to new keys; a stored setting naming one is migrated to DEFAULT_MODEL
 export const RETIRED_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
+// each model has its own free-tier quota; tried in order when the chosen model's day is used up
+export const FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+export const timers = { sleep: (ms) => new Promise(r => setTimeout(r, ms)) };   // stubbed by the tests
 const MAX_EDGE = 1280, THUMB_EDGE = 320;
 
 const REF_LINES = REFERENCE.map(r => `${r.id} | ${r.name} | ${r.portion}`).join("\n");
@@ -25,7 +30,7 @@ Method:
 3. If nothing in the table fits, set ref to null and give your own kcal, kcal_lo, kcal_hi and protein_g for the portion eaten, and mark confidence low.
 4. Weights the person states (e.g. "239 g rice") override what you see: rice 100 g ≈ 130 kcal, 2.7 g protein; cooked lean meat 100 g ≈ 165-230 kcal, 25-31 g protein.
 5. If the person says they shared with others, do NOT reduce for that — the app applies their share separately. Only apply explicit "I ate X of it" statements about components.
-6. Lookup notes, if given, come from a web search about the venue; prefer published venue figures over the table when they exist, via ref: null with the published numbers and confidence high.
+6. Chains and packaged products publish nutrition figures (McDonald's, KFC, Subway, Guzman y Gomez, Luckin, Yakult, Meiji, supermarket brands). When the venue or product is one you know published figures for, use those via ref: null, say so in "grounding", and mark confidence medium unless the item is unambiguous.
 
 Reference table (id | name | one portion):
 ${REF_LINES}
@@ -89,14 +94,24 @@ async function generate(apiKey, model, body) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const msg = j?.error?.message || r.statusText;
-    if (r.status === 429) throw new Error("Gemini free-tier rate limit hit — wait a minute and try again. " + msg);
-    if (r.status === 400 && /API key/i.test(msg)) throw new Error("Gemini rejected the API key. Check it in ⚙ Settings.");
-    const e = new Error(`Gemini ${r.status}: ${msg}`);
-    // "This model ... is no longer available ... use models/gemini-X" — carry the hint so the caller can switch
-    const hint = r.status === 404 && msg.match(/use models\/([\w.-]+)/i);
-    if (hint) e.suggestedModel = hint[1];
-    throw e;
+    const msg = j?.error?.message || r.statusText, details = j?.error?.details || [];
+    let e;
+    if (r.status === 429) {
+      // google.rpc.QuotaFailure names the bucket (…PerDay… / …PerMinute…); RetryInfo says how long to wait
+      const q = details.find(d => /QuotaFailure/.test(d["@type"] || ""))?.violations?.[0] || {};
+      const daily = /PerDay/i.test(q.quotaId || "");
+      e = new Error(daily ? `${model}: free-tier day used up${q.quotaValue ? ` (${q.quotaValue} requests)` : ""}` : `${model}: free-tier busy`);
+      e.rateLimited = true; e.daily = daily;
+      e.retryAfter = parseFloat(details.find(d => /RetryInfo/.test(d["@type"] || ""))?.retryDelay) || 0;
+    } else if (r.status === 400 && /API key/i.test(msg)) {
+      e = new Error("Gemini rejected the API key. Check it in ⚙ Settings.");
+    } else {
+      e = new Error(`Gemini ${r.status}: ${msg}`);
+      // "This model ... is no longer available ... use models/gemini-X" — carry the hint so the caller can switch
+      const hint = r.status === 404 && msg.match(/use models\/([\w.-]+)/i);
+      if (hint) e.suggestedModel = hint[1];
+    }
+    e.status = r.status; throw e;
   }
   const cand = j.candidates?.[0];
   if (!cand) throw new Error("Gemini returned no candidates" + (j.promptFeedback?.blockReason ? ` (blocked: ${j.promptFeedback.blockReason})` : ""));
@@ -107,38 +122,43 @@ async function generate(apiKey, model, body) {
   return { text, usage: j.usageMetadata || {}, grounding: cand.groundingMetadata || null };
 }
 
-const VENUE_HINT = /\b(from|at|@)\s+[A-Z0-9]|\b(stall|restaurant|cafe|kopitiam|hawker|coffee ?shop)\b/;
-export const wantsLookup = (text, mode) => mode === "on" || (mode !== "off" && VENUE_HINT.test(text || ""));
-
-async function lookup(apiKey, model, text) {
-  const { text: notes, grounding } = await generate(apiKey, model, {
-    contents: [{ role: "user", parts: [{ text:
-      `A person in Singapore ate this: "${text}". Search for the venue or product named and find any published portion, calorie or protein figures for that dish there. Reply in under 120 words: what you found, with numbers and where they came from, or say that nothing specific was published.` }] }],
-    tools: [{ google_search: {} }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 400 },
-  });
-  const sources = (grounding?.groundingChunks || []).map(c => c.web?.title || c.web?.uri).filter(Boolean).slice(0, 4);
-  return { notes, sources };
+/** generate() with the free tier's failure modes handled: a per-minute 429 waits and retries once;
+ *  a per-day 429 (or a second per-minute one) moves on to the next model, which has its own quota.
+ *  onStatus(text) tells the UI what is happening during the wait. Returns the model that answered. */
+async function callModel(apiKey, model, body, onStatus = () => {}) {
+  const chain = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
+  let daily = false;
+  for (const m of chain) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { return { ...(await generate(apiKey, m, body)), model: m }; }
+      catch (e) {
+        if (e.status === 404 && m !== model) break;                       // a fallback Google no longer serves
+        if (!e.rateLimited) throw e;
+        daily ||= e.daily;
+        if (e.daily || attempt) { onStatus(`${e.message} — trying the next model`); break; }
+        const s = Math.min(60, Math.max(5, Math.ceil(e.retryAfter || 20)));
+        onStatus(`${m} is busy — retrying in ${s} s`); await timers.sleep(s * 1000);
+      }
+    }
+  }
+  const e = new Error(daily
+    ? "Gemini's free tier is used up for today on every model it tries — it resets at midnight Pacific (3–4 pm Singapore). Type it in for now."
+    : "Gemini's free tier is busy on every model it tries — wait a minute and try again.");
+  e.rateLimited = true; throw e;
 }
 
 /**
  * Run one estimate.
- * @param {object} o  { apiKey, model, images: Blob[], text, share, lookupMode, prior }
+ * @param {object} o  { apiKey, model, images: Blob[], text, share, prior, priorImages, onStatus }
  *   prior: an earlier estimate result to refine (its raw identification + the correction in `text`)
- * @returns {object} { result (computed), ident (raw), thumbs[], notes, usage }
+ * @returns {object} { result (computed), ident (raw), thumbs[], images[], usage, model (the one that answered) }
  */
-export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, lookupMode = "auto", prior = null, priorImages = [] }) {
+export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], onStatus }) {
   if (!apiKey) throw new Error("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
   const prepared = [];
   for (const b of images) prepared.push(await prepareImage(b));
   const imageParts = prepared.map(p => ({ inline_data: { mime_type: "image/jpeg", data: p.data } }));
   for (const d of priorImages) imageParts.push({ inline_data: { mime_type: "image/jpeg", data: d } });
-
-  let notes = null, sources = [];
-  if (!prior && wantsLookup(text, lookupMode)) {
-    try { ({ notes, sources } = await lookup(apiKey, model, text)); }
-    catch (e) { notes = `(lookup failed: ${e.message})`; }
-  }
 
   const prompt = [];
   if (prior) {
@@ -148,7 +168,6 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
   } else {
     prompt.push("What I ate: " + (text.trim() || "(see photo)"));
   }
-  if (notes) prompt.push("Lookup notes from web search:\n" + notes);
   prompt.push(`Local time: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore", weekday: "short", hour: "2-digit", minute: "2-digit" })}.`);
 
   const body = {
@@ -157,27 +176,26 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
     generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.2, maxOutputTokens: 2000 },
   };
 
-  let ident, usage, raw;
+  let ident, usage, raw, used;
   for (let attempt = 0; attempt < 2; attempt++) {
-    ({ text: raw, usage } = await generate(apiKey, model, body));
+    ({ text: raw, usage, model: used } = await callModel(apiKey, model, body, onStatus));
     try { ident = JSON.parse(raw); break; }
     catch { if (attempt) throw new Error("Gemini returned malformed JSON twice: " + raw.slice(0, 200)); }
   }
-  if (sources.length) ident.grounding = [...(ident.grounding || []), ...sources.map(s => "search: " + s)];
   const result = computeFromIdentification(ident, share);
-  return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), notes, usage };
+  return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), usage, model: used };
 }
 
 
 // ------------------------------------------------------------ other readers
-async function extract(apiKey, model, blob, instruction, schema) {
+async function extract(apiKey, model, blob, instruction, schema, onStatus) {
   if (!apiKey) throw new Error("No Gemini API key. Add your free key in ⚙ Settings.");
   const img = await prepareImage(blob);
-  const { text } = await generate(apiKey, model, {
+  const { text, model: used } = await callModel(apiKey, model, {
     contents: [{ role: "user", parts: [{ inline_data: { mime_type: "image/jpeg", data: img.data } }, { text: instruction }] }],
     generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1, maxOutputTokens: 800 },
-  });
-  return { data: JSON.parse(text), thumb: img.thumb };
+  }, onStatus);
+  return { data: JSON.parse(text), thumb: img.thumb, model: used };
 }
 
 const LABEL_SCHEMA = { type: "OBJECT", properties: {
@@ -192,10 +210,10 @@ const LABEL_SCHEMA = { type: "OBJECT", properties: {
 }, required: ["product", "kind", "basis", "serving_size", "serving_g_or_ml", "kcal", "protein_g", "servings_per_pack", "confidence"] };
 
 /** Read a nutrition label. Returns per-100ml/100g values when printed, else per serving. */
-export async function readLabel({ apiKey, model = DEFAULT_MODEL, image }) {
+export async function readLabel({ apiKey, model = DEFAULT_MODEL, image, onStatus }) {
   return extract(apiKey, model, image,
     "This is a food or drink package. Read the nutrition information panel exactly as printed. Prefer the per-100 ml or per-100 g column when it exists; otherwise give per-serving values and the serving size. Energy in kcal (convert from kJ if only kJ is printed: kJ / 4.184). If it is a milk, kind=milk; a protein powder, kind=whey; otherwise food or drink.",
-    LABEL_SCHEMA);
+    LABEL_SCHEMA, onStatus);
 }
 
 const WORKOUT_SCHEMA = { type: "OBJECT", properties: {
@@ -210,8 +228,8 @@ const WORKOUT_SCHEMA = { type: "OBJECT", properties: {
 }, required: ["app", "sport", "title", "date", "duration_min", "distance_km", "calories", "avg_hr", "pace_or_speed", "confidence"] };
 
 /** Read a workout summary screenshot (Strava, Garmin, REVL, ...). */
-export async function readWorkout({ apiKey, model = DEFAULT_MODEL, image }) {
+export async function readWorkout({ apiKey, model = DEFAULT_MODEL, image, onStatus }) {
   return extract(apiKey, model, image,
     "This is a screenshot of a workout summary from a fitness app. Extract exactly what is shown: duration in minutes, distance in km, calories (kcal), average heart rate, the date if visible, and which app it is. Do not estimate values that are not shown; leave them null.",
-    WORKOUT_SCHEMA);
+    WORKOUT_SCHEMA, onStatus);
 }

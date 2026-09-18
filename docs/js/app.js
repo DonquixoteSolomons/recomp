@@ -192,7 +192,7 @@ $("#est-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#est-status").textContent = "reading label…";
   try {
-    const { data: L, thumb } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f }));
+    const { data: L, thumb } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#est-status").textContent = m }));
     state.label = L; $("#est-status").textContent = `label · ${L.confidence}`;
     const per = L.basis === "serving" ? `per serving (${esc(L.serving_size)})` : `per ${L.basis}`;
     const box = $("#est-result"); box.hidden = false;
@@ -236,12 +236,12 @@ async function runEstimate(correction = null) {
   const text = correction ?? $("#est-text").value;
   $("#est-status").textContent = prior ? "refining…" : "estimating…"; $("#est-go").disabled = true;
   try {
-    const args = { apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, images: prior ? [] : state.estFiles, text, share: state.share,
-      lookupMode: state.settings.ai_lookup || "auto", prior, priorImages: prior ? prior.images : [] };
+    const args = { apiKey: state.settings.gemini_key, images: prior ? [] : state.estFiles, text, share: state.share,
+      prior, priorImages: prior ? prior.images : [], onStatus: (m) => $("#est-status").textContent = m };
     const out = await withModelFallback(() => runGemini({ ...args, model: state.settings.ai_model || DEFAULT_MODEL }));
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
-    const row = { day: at.slice(0, 10), at, text, share: state.share, model: state.settings.ai_model || DEFAULT_MODEL, ident: out.ident, result: out.result,
-      thumb: out.thumbs[0] || (prior?.thumb ?? null), notes: out.notes, usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
+    const row = { day: at.slice(0, 10), at, text, share: state.share, model: out.model, ident: out.ident, result: out.result,
+      thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
     row.id = await db.add("estimates", row);
     state.est = { ...row, images: out.images.length ? out.images : (prior?.images || []) };
     renderEstimate();
@@ -265,7 +265,6 @@ function renderEstimate() {
     ${r.model_share > 0.5 ? `<p><b>Note:</b> most of this came from the model's own figures, not the reference table — treat as rough.</p>` : ""}
     ${r.assumptions?.length ? `<p><b>Assumed:</b> ${esc(r.assumptions.join("; "))}</p>` : ""}
     ${r.grounding?.length ? `<p><b>Based on:</b> ${esc(r.grounding.join("; "))}</p>` : ""}
-    ${e.notes ? `<p><b>Lookup:</b> ${esc(e.notes)}</p>` : ""}
     ${r.tighten ? `<p><b>Would tighten it:</b> ${esc(r.tighten)}</p>` : ""}
     <div class="row gap"><input class="text grow" id="est-refine" placeholder="Correct it — “only ate half the rice”, “2 wings not 5”"><button class="btn" id="est-refine-go">Refine</button></div>
     <div class="row gap end"><button class="btn" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button></div>
@@ -382,7 +381,7 @@ $("#prod-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#prod-status").textContent = "reading…";
   try {
-    const { data: L } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f }));
+    const { data: L } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#prod-status").textContent = m }));
     const form = $("#product-form");
     form.kind.value = L.kind === "whey" ? "whey" : "milk"; syncPer();
     form.label.value = L.product;
@@ -435,7 +434,7 @@ $("#wo-shot").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#wo-shot-status").textContent = "reading…";
   try {
-    const { data: W } = await withModelFallback(() => readWorkout({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f }));
+    const { data: W } = await withModelFallback(() => readWorkout({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#wo-shot-status").textContent = m }));
     if (W.duration_min) $("#wo-min").value = Math.round(W.duration_min);
     if (W.distance_km) $("#wo-km").value = W.distance_km;
     if (W.calories) $("#wo-kcal").value = Math.round(W.calories);
@@ -605,11 +604,10 @@ $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
   for (const m of rows) {
     dataMsg(`Valuing ${done + 1}/${rows.length}: ${rawText(m).slice(0, 50)}…`);
     try {
-      const model = state.settings.ai_model || DEFAULT_MODEL;
-      const out = await withModelFallback(() => runGemini({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || model, images: [], text: rawText(m), share: 1, lookupMode: "off" }));
-      const estId = await db.add("estimates", { day: m.day, at: m.at, text: rawText(m), share: 1, model, ident: out.ident, result: out.result, thumb: null, notes: null, usage: out.usage, parent_id: null, meal_id: m.id });
+      const out = await withModelFallback(() => runGemini({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, images: [], text: rawText(m), share: 1, onStatus: dataMsg }));
+      const estId = await db.add("estimates", { day: m.day, at: m.at, text: rawText(m), share: 1, model: out.model, ident: out.ident, result: out.result, thumb: null, usage: out.usage, parent_id: null, meal_id: m.id });
       await valueRow(m, out.result, estId); done++;
-    } catch (err) { failed++; if (/rate limit/i.test(err.message)) { dataMsg(`Rate limit after ${done}. Waiting 60 s…`); await wait(60000); } else if (failed > 3) { dataMsg(`Stopped after ${done}: ${err.message}`); break; } }
+    } catch (err) { failed++; if (err.rateLimited) { dataMsg(`Stopped after ${done}: ${err.message}`); break; } else if (failed > 3) { dataMsg(`Stopped after ${done}: ${err.message}`); break; } }
     await wait(7000);
   }
   dataMsg(`Valued ${done} of ${rows.length}${failed ? `, ${failed} failed` : ""}.`); await loadTrend(); await markDirty();
@@ -626,7 +624,7 @@ $("#import-file").addEventListener("change", async (e) => {
 
 // ------------------------------------------------------------ settings
 const SETTINGS = [
-  ["gemini_key", "Gemini API key (free, aistudio.google.com)", "password"], ["ai_model", "Gemini model", "text"], ["ai_lookup", "Venue lookup: auto / on / off", "text"],
+  ["gemini_key", "Gemini API key (free, aistudio.google.com)", "password"], ["ai_model", "Gemini model", "text"],
   ["gh_repo", "GitHub data repo (owner/name)", "text"], ["gh_token", "GitHub token (Contents read/write)", "password"], ["backup_auto", "Auto-backup after changes (1/0)", "text"],
   ["protein_floor_g", "Protein floor (g)", "text"], ["protein_ceiling_g", "Protein ceiling (g)", "text"],
   ["weight_lo_kg", "Weight low (kg)", "text"], ["weight_hi_kg", "Weight high (kg)", "text"],
