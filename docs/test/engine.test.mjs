@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays } from "../js/engine.js";
+import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays, streak } from "../js/engine.js";
 import { shake, computeFromIdentification, REFERENCE, QUICK, DEFAULT_PRODUCTS } from "../js/foods.js";
 
 const S = { creatine_start: "2000-01-01", creatine_settle_days: "28", recomp_deficit_kcal: "250",
@@ -226,4 +226,13 @@ test("two weigh-ins on one morning: the later one is the day's reading, as in th
   ];
   const p = weightTrend(body, S).at(-1);
   assert.equal(p.weight, 74.85); assert.equal(p.bodyfat, 25.9);
+});
+
+test("streak: consecutive complete days, today counted only once it is complete", () => {
+  const day = (d, kcal) => ({ day: d, at: d + "T12:00:00+08:00", kcal, kcal_lo: kcal, kcal_hi: kcal, protein_g: 50 });
+  const meals = [day("2026-09-15", 1800), day("2026-09-16", 2100), day("2026-09-17", 1900), day("2026-09-18", 2000), day("2026-09-19", 400)];
+  assert.deepEqual(streak(meals, "2026-09-19"), { days: 4, today: false });          // today has only breakfast so far: yesterday's 4 stand
+  assert.deepEqual(streak([...meals, day("2026-09-19", 900)], "2026-09-19"), { days: 5, today: true });
+  assert.deepEqual(streak(meals.filter(m => m.day !== "2026-09-17"), "2026-09-19"), { days: 1, today: false });   // a missed day resets
+  assert.deepEqual(streak([], "2026-09-19"), { days: 0, today: false });
 });

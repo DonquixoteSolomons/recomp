@@ -76,6 +76,18 @@ export function weekSummary(meals, workouts, bodyRows, settings, asOf) {
 }
 export const sessionsKcal = (workouts, settings) => workouts.reduce((a, w) => a + sessionKcal(w, settings), 0);
 
+/** Consecutive logged days ending today (or yesterday, if today is not complete yet).
+    A day counts when its intake reaches INCOMPLETE_KCAL — the same bar the engine uses.
+    { days, today: whether today already counts } */
+export function streak(meals, asOf, minKcal = INCOMPLETE_KCAL) {
+  const intake = dailyIntake(meals);
+  const counts = (d) => (intake.get(d)?.kcal || 0) >= minKcal;
+  const today = counts(asOf);
+  let d = today ? asOf : addDays(asOf, -1), days = 0;
+  while (counts(d)) { days++; d = addDays(d, -1); }
+  return { days, today };
+}
+
 export function dailyIntake(meals) {
   const m = new Map();
   for (const r of meals) {

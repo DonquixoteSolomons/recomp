@@ -1,5 +1,5 @@
 /* App shell cache so the page opens offline; data lives in IndexedDB, not here. */
-const CACHE = "recomp-v15";
+const CACHE = "recomp-v16";
 const SHELL = ["./", "./index.html", "./css/style.css", "./js/app.js", "./js/db.js", "./js/foods.js",
                "./js/engine.js", "./js/estimate.js", "./js/sync.js", "./manifest.webmanifest", "./icon.svg"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

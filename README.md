@@ -66,10 +66,10 @@ Google to improve their models.
    versions: "Install and create shortcut" → **Install**). Choose *Install*,
    not *Create shortcut* — a shortcut just opens Chrome; the installed app
    runs full-screen and offline.
-2. ⚙ Settings: paste the Gemini key, the GitHub token, and `you/recomp-data`.
+2. Settings (the gear, top right): paste the Gemini key, the GitHub token, and `you/recomp-data`.
 3. Trend tab → **Advanced → Import file** with `seed.json` (once; it also
    restores your targets) → **Fetch scale now**.
-4. Check ⚙ once: the public source ships with placeholder targets; the
+4. Check Settings once: the public source ships with placeholder targets; the
    import overwrites them with yours, but confirm they look right.
 
 That's it. From then on: weigh in each morning (the workflow fetches it),
@@ -77,24 +77,35 @@ photograph or describe what you eat, tap Add.
 
 ## What it does
 
-**Today** is your status and your log. Protein and calorie meters, the verdict
-("Fine to end the day here" / "Protein first"), then everything logged today,
-then a week card. Inputs come up from the bar at the bottom:
+The look and the interaction borrow from Duolingo: one heavy rounded face,
+2 px-bordered cards, chunky buttons that press down, thick rounded progress
+bars, tinted option cards, a bottom nav with big icons, a haptic tick on every
+press, and a streak. Green is protein and done, blue is calories, purple is
+training, orange is attention, red is over.
 
-- **Meal** — *Recent* chips are learned from your own log (frequency with
-  recency decay), one tap to repeat. **Camera**, **Gallery** (pick existing
+**Today** is your status and your log. The top strip shows the logging streak
+(lit once today has ≥1,000 kcal logged) and the latest weigh-in. The status
+card has the verdict ("Day complete" / "Protein first" / "Over the calorie
+band"), protein and calorie bars, and four daily goals with check marks
+(protein floor, calories, weigh-in, session). Then everything logged today,
+then a week card. The bottom nav is Today, Trend, and the three inputs, which
+open as sheets with the one primary action pinned at the bottom:
+
+- **Meal** — *Regulars* are learned from your own log (eaten 3+ times,
+  frequency with recency decay), one tap to repeat, × to hide. **Camera**, **Gallery** (pick existing
   photos), or **Label** (a nutrition panel → exact values, then how much you
-  had). Describe it, set your share (All / ½ / ⅓ / ¼), the time, **Estimate**.
-  Refine with a correction; Add to log. "Type it in" for the rare manual entry.
-- **Shake** — typed grams, product pickers, exact arithmetic. **＋ New tub or
-  carton** opens the product form with **Read the label**: photo → per-100ml
-  or per-gram values filled in.
+  had). Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**. Refine
+  with a correction; Add to log. "Type it in" for the rare manual entry.
+- **Shake** — typed grams, product pickers, exact arithmetic; opens on what
+  you made last time. **＋ New tub or carton** opens the product form with
+  **Read the label**: photo → per-100ml or per-gram values filled in.
 - **Workout** — classes and cardio (REVL Move/Sweat/Perform, Run, Swim) take
   minutes, km, and kcal if your watch or Strava shows it — or **From
   screenshot**, which reads those off a Strava/Garmin/REVL summary. A kcal
   figure overrides the per-kind default. **Strength** takes exercise × sets
   (kg × reps) and feeds the Lifts card.
-- **More** — weigh-in by hand, products, backup.
+
+Weigh-in by hand and backups live under **Trend → Scale**.
 
 Tap any logged row to **edit** it (label, numbers, time), **log it again**,
 value it with AI, or delete it.
@@ -115,7 +126,7 @@ or you tap the row and type it in. A logged meal is never lost to an outage.
 
 **Sessions move calories between days; they never inflate the week.** Each
 logged workout raises *that day's* target by its burn — measured kcal when you
-have it, else a per-kind default (⚙). Before the engine has data,
+have it, else a per-kind default (Settings). Before the engine has data,
 `provisional_kcal` is the **rest-day base**. Once measured, the engine takes
 the sessions you actually logged in the window back out of the measured
 average to get a rest-day base, then adds each session back on the day it

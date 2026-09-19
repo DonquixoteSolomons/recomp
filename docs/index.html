@@ -2,87 +2,121 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#161D1B">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131F24" media="(prefers-color-scheme: dark)">
 <title>Recomp</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
+<!-- icon sprite: one stroke style everywhere, no emoji (they render differently on every phone) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M6 15l4-5 4 3 5-7"/></symbol>
+    <symbol id="i-meal" viewBox="0 0 24 24"><path d="M4 12h16"/><path d="M5 12a7 7 0 0 1 14 0"/><path d="M3 16h18"/><path d="M12 5V3"/></symbol>
+    <symbol id="i-shake" viewBox="0 0 24 24"><path d="M7 4h10l-1.2 15a2 2 0 0 1-2 1.8H10.2a2 2 0 0 1-2-1.8Z"/><path d="M8 10h8"/><path d="M13 4l2-2"/></symbol>
+    <symbol id="i-lift" viewBox="0 0 24 24"><path d="M3 10v4"/><path d="M6 8v8"/><path d="M9 6v12"/><path d="M15 6v12"/><path d="M18 8v8"/><path d="M21 10v4"/><path d="M9 12h6"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4Z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m4 16 5-5 4 4 3-3 4 4"/><circle cx="15.5" cy="9.5" r="1.5"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l9 9-8 8Z"/><circle cx="7.5" cy="8.5" r="1.5"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3s1 3 4 6 3 6 1 9-6 4-9 1-2-7 0-9c0 3 2 4 2 4s-1-6 2-11Z"/></symbol>
+    <symbol id="i-scale" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 10a5 5 0 0 1 8 0"/><path d="m12 12 2-2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13h6l-1 8 9-11h-6Z"/></symbol>
+  </defs>
+</svg>
+
+<!-- ============================================================ TOP STRIP -->
 <header class="top">
-  <nav class="tabs" role="tablist">
-    <button class="tab is-on" data-tab="today" role="tab">Today</button>
-    <button class="tab" data-tab="trend" role="tab">Trend</button>
-  </nav>
-  <button class="icon" id="btn-settings" aria-label="Settings">⚙</button>
+  <button class="stat streak" id="streak" aria-label="Logging streak"><svg><use href="#i-flame"/></svg><b>0</b></button>
+  <button class="stat weight" id="weight-chip" hidden><svg><use href="#i-scale"/></svg><b>—</b><small></small></button>
+  <span class="grow"></span>
+  <button class="icon" id="btn-settings" aria-label="Settings"><svg><use href="#i-gear"/></svg></button>
 </header>
 
 <!-- ============================================================ TODAY -->
 <main id="view-today" class="view">
 
   <section class="daybar">
-    <button class="icon" id="day-prev" aria-label="Previous day">‹</button>
-    <button class="daylabel" id="day-label">—</button>
-    <button class="icon" id="day-next" aria-label="Next day">›</button>
+    <button class="icon round" id="day-prev" aria-label="Previous day"><svg><use href="#i-left"/></svg></button>
+    <button class="daylabel" id="day-label"><b>Today</b><small id="day-sub"></small></button>
+    <button class="icon round" id="day-next" aria-label="Next day"><svg><use href="#i-right"/></svg></button>
   </section>
-  <button class="weightchip" id="weight-chip" hidden></button>
 
-  <section class="meters">
+  <section class="card status" id="status">
+    <div class="verdict" id="verdict"></div>
     <div class="meter">
-      <div class="meter-head"><span class="eyebrow">Protein</span><span class="mono"><b id="p-val">0</b> / <span id="p-range">—</span> g</span></div>
-      <div class="bar"><div class="fill" id="p-fill"></div><div class="tick" id="p-floor"></div><div class="tick" id="p-ceil"></div></div>
+      <div class="meter-head"><span class="label">Protein</span><span class="val"><b id="p-val">0</b> / <span id="p-range">—</span> g</span></div>
+      <div class="bar green"><div class="fill" id="p-fill"></div><div class="tick" id="p-floor"></div><div class="tick" id="p-ceil"></div></div>
       <div class="meter-foot" id="p-foot"></div>
     </div>
     <div class="meter">
-      <div class="meter-head"><span class="eyebrow">Calories</span><span class="mono"><b id="k-val">0</b> / <span id="k-range">—</span></span></div>
-      <div class="bar"><div class="band" id="k-band"></div><div class="fill" id="k-fill"></div></div>
+      <div class="meter-head"><span class="label">Calories</span><span class="val"><b id="k-val">0</b> / <span id="k-range">—</span></span></div>
+      <div class="bar blue"><div class="band" id="k-band"></div><div class="fill" id="k-fill"></div></div>
       <div class="meter-foot" id="k-foot"></div>
     </div>
+    <ul class="goals" id="goals"></ul>
   </section>
 
-  <section class="verdict" id="verdict"></section>
-  <p class="syncwarn" id="sync-warn" hidden></p>
-  <p class="hint" id="est-hint" hidden>Photo estimates need a free Gemini key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>, then ⚙ Settings.</p>
+  <p class="callout warn" id="sync-warn" hidden></p>
+  <p class="callout" id="est-hint" hidden>Photo estimates need a free Gemini key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>, then Settings.</p>
 
-  <section class="block">
-    <div class="row between"><h2 class="eyebrow">Log</h2><span class="mono muted" id="log-count"></span></div>
+  <section class="card">
+    <div class="card-head"><h2>Log</h2><span class="muted" id="log-count"></span></div>
     <ul class="log" id="log"></ul>
-    <p class="note" id="log-hint">Tap a row to edit it, log it again, or remove it.</p>
+    <p class="note" id="log-hint">Tap an entry to edit it, log it again or remove it.</p>
   </section>
 
-  <section class="block" id="week"></section>
+  <section class="card" id="week"></section>
 </main>
 
 <!-- ============================================================ TREND -->
 <main id="view-trend" class="view" hidden>
-  <section class="block">
-    <div class="row between"><h2 class="eyebrow">Weight</h2><span class="mono muted" id="trend-latest"></span></div>
+  <section class="card">
+    <div class="card-head"><h2>Weight</h2><span class="muted" id="trend-latest"></span></div>
     <canvas id="chart" height="200"></canvas>
     <p class="note" id="chart-note"></p>
   </section>
-  <section class="block" id="bf-block" hidden>
-    <div class="row between"><h2 class="eyebrow">Body fat</h2><span class="mono muted" id="bf-latest"></span></div>
+  <section class="card" id="bf-block" hidden>
+    <div class="card-head"><h2>Body fat</h2><span class="muted" id="bf-latest"></span></div>
     <canvas id="bfchart" height="140"></canvas>
     <p class="note" id="bf-note"></p>
   </section>
-  <section class="block" id="expenditure"></section>
-  <section class="block" id="lifts" hidden></section>
-  <section class="block">
-    <div class="row between"><h2 class="eyebrow">Scale</h2><span class="mono muted" id="backup-state"></span></div>
+  <section class="card" id="expenditure"></section>
+  <section class="card" id="lifts" hidden></section>
+  <section class="card">
+    <div class="card-head"><h2>Scale</h2><span class="muted" id="backup-state"></span></div>
     <p class="note" id="body-fresh"></p>
     <div class="row gap wrap">
       <button class="btn" id="btn-pull">Fetch scale now</button>
       <button class="btn" id="btn-fixall" hidden>Value ? rows with AI</button>
     </div>
-    <p class="mono muted" id="data-msg"></p>
+    <p class="note mono" id="data-msg"></p>
     <details>
-      <summary class="eyebrow">Advanced</summary>
-      <p class="note">Backups happen on their own after every change. These are for a new phone or a manual copy.</p>
+      <summary>Weigh in by hand</summary>
+      <div class="row gap top">
+        <label class="lbl">kg <input class="num" id="bw-kg" type="number" min="30" max="200" step="0.05" inputmode="decimal"></label>
+        <label class="lbl">body fat % <input class="num" id="bw-bf" type="number" min="3" max="60" step="0.1" inputmode="decimal"></label>
+        <button class="btn" id="bw-log">Log</button>
+      </div>
+      <p class="note">Renpho readings arrive on their own. Use this only when the scale isn't synced.</p>
+    </details>
+    <details>
+      <summary>Backups</summary>
+      <p class="note top">Backups happen on their own after every change. These are for a new phone or a manual copy.</p>
       <div class="row gap wrap">
         <button class="btn" id="btn-backup">Back up now</button>
         <button class="btn" id="btn-restore">Restore from GitHub</button>
@@ -93,42 +127,42 @@
   </section>
 </main>
 
-<!-- ============================================================ ACTION BAR -->
-<nav class="actionbar" id="actionbar">
-  <button data-sheet="meal"><span>📷</span>Meal</button>
-  <button data-sheet="shake"><span>🥤</span>Shake</button>
-  <button data-sheet="workout"><span>🏋</span>Workout</button>
-  <button data-sheet="more"><span>⋯</span>More</button>
+<!-- ============================================================ BOTTOM NAV -->
+<nav class="nav" id="actionbar">
+  <button class="tab is-on" data-tab="today"><svg><use href="#i-home"/></svg><span>Today</span></button>
+  <button class="tab" data-tab="trend"><svg><use href="#i-chart"/></svg><span>Trend</span></button>
+  <button class="act green" data-sheet="meal"><svg><use href="#i-meal"/></svg><span>Meal</span></button>
+  <button class="act blue" data-sheet="shake"><svg><use href="#i-shake"/></svg><span>Shake</span></button>
+  <button class="act purple" data-sheet="workout"><svg><use href="#i-lift"/></svg><span>Workout</span></button>
 </nav>
 
 <!-- ============================================================ MEAL SHEET -->
 <dialog class="sheet" id="sheet-meal">
-  <div class="sheet-head"><h2>Meal</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-head"><span class="grip"></span><h2>Meal</h2><button class="icon close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="sheet-body">
+    <p class="callout" id="est-fixing" hidden></p>
     <div id="recent-wrap">
-      <div class="row between"><p class="eyebrow">Regulars — one tap</p><span class="mono muted">eaten 3+ times · × to hide</span></div>
+      <div class="card-head"><h3>Regulars</h3><span class="muted">one tap · eaten 3+ times</span></div>
       <div class="chips" id="recent"></div>
     </div>
-    <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden>📷 Camera</label>
-      <label class="btn filebtn"><input type="file" id="est-gallery" accept="image/*" multiple hidden>🖼 Gallery</label>
-      <label class="btn filebtn"><input type="file" id="est-label" accept="image/*" hidden>🏷 Label</label>
+    <div class="photo-row">
+      <label class="btn tile"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden><svg><use href="#i-camera"/></svg>Camera</label>
+      <label class="btn tile"><input type="file" id="est-gallery" accept="image/*" multiple hidden><svg><use href="#i-image"/></svg>Gallery</label>
+      <label class="btn tile"><input type="file" id="est-label" accept="image/*" hidden><svg><use href="#i-tag"/></svg>Label</label>
     </div>
     <div class="thumbs" id="est-thumbs"></div>
     <textarea id="est-text" class="text" rows="3" placeholder="What is it, where from, what you shared or skipped — “ayam penyet from Amigos, didn't finish the rice”"></textarea>
-    <div class="row gap">
-      <span class="mono muted">my share</span>
+    <div class="share-row">
+      <span class="label">My share</span>
       <div class="seg" id="est-share" role="radiogroup" aria-label="My share">
         <button data-v="1" class="on">All</button><button data-v="0.5">½</button><button data-v="0.33">⅓</button><button data-v="0.25">¼</button>
       </div>
     </div>
-    <button class="btn primary" id="est-go">Estimate</button>
-    <p class="hint" id="est-fixing" hidden></p>
-    <p class="mono muted" id="est-status"></p>
+    <p class="status" id="est-status"></p>
     <div id="est-result" hidden></div>
     <details>
-      <summary class="eyebrow">Type it in</summary>
-      <form id="manual" class="form">
+      <summary>Type it in instead</summary>
+      <form id="manual" class="form top">
         <input class="text" name="label" placeholder="What was it" required>
         <div class="row gap">
           <label class="lbl">kcal <input class="num" name="kcal" type="number" min="0" step="any" required inputmode="decimal"></label>
@@ -138,99 +172,80 @@
       </form>
     </details>
   </div>
+  <div class="sheet-foot" id="meal-foot"><button class="btn primary block" id="est-go">Estimate</button></div>
 </dialog>
 
 <!-- ============================================================ SHAKE SHEET -->
 <dialog class="sheet" id="sheet-shake">
-  <div class="sheet-head"><h2>Shake</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-head"><span class="grip"></span><h2>Shake</h2><button class="icon close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="sheet-body">
-    <div class="row between"><span class="mono muted">exact from the labels</span><span class="mono result" id="shake-result">—</span></div>
+    <div class="hero blue"><b id="shake-result">—</b><small>exact from the labels</small></div>
     <div class="row gap">
       <label class="lbl">whey g <input class="num" id="whey" type="number" min="0" max="200" step="1" value="44" inputmode="decimal"></label>
       <label class="lbl">milk ml <input class="num" id="milk" type="number" min="0" max="1000" step="1" value="250" inputmode="decimal"></label>
       <label class="lbl">creatine g <input class="num" id="creatine" type="number" min="0" max="20" step="1" value="6" inputmode="decimal"></label>
     </div>
     <div class="row gap">
-      <select id="whey-id" class="select" aria-label="Whey"></select>
-      <select id="milk-id" class="select" aria-label="Milk"></select>
+      <label class="lbl">whey <select id="whey-id" class="select" aria-label="Whey"></select></label>
+      <label class="lbl">milk <select id="milk-id" class="select" aria-label="Milk"></select></label>
     </div>
-    <div class="row gap"><button class="btn" id="btn-product">＋ New tub or carton</button></div>
-    <button class="btn primary" id="btn-shake">Add shake</button>
+    <button class="btn ghost" id="btn-product"><svg><use href="#i-plus"/></svg>New tub or carton</button>
   </div>
+  <div class="sheet-foot"><button class="btn primary blue block" id="btn-shake">Add shake</button></div>
 </dialog>
 
 <!-- ============================================================ WORKOUT SHEET -->
 <dialog class="sheet" id="sheet-workout">
-  <div class="sheet-head"><h2>Workout</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-head"><span class="grip"></span><h2>Workout</h2><button class="icon close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="sheet-body">
-    <div class="chips" id="wo-kinds">
-      <button class="chip w" data-kind="revl_move">REVL Move</button>
-      <button class="chip w" data-kind="revl_sweat">REVL Sweat</button>
-      <button class="chip w" data-kind="revl_perform">REVL Perform</button>
-      <button class="chip w" data-kind="run">Run</button>
-      <button class="chip w" data-kind="swim">Swim</button>
-      <button class="chip w" data-kind="lift">Strength</button>
+    <div class="options" id="wo-kinds">
+      <button class="opt" data-kind="revl_move">REVL Move</button>
+      <button class="opt" data-kind="revl_sweat">REVL Sweat</button>
+      <button class="opt" data-kind="revl_perform">REVL Perform</button>
+      <button class="opt" data-kind="run">Run</button>
+      <button class="opt" data-kind="swim">Swim</button>
+      <button class="opt" data-kind="lift">Strength</button>
     </div>
-    <div id="wo-cardio">
+    <div id="wo-cardio" class="stack">
       <div class="row gap">
         <label class="lbl">minutes <input class="num" id="wo-min" type="number" min="0" step="1" inputmode="decimal"></label>
         <label class="lbl">km <input class="num" id="wo-km" type="number" min="0" step="0.01" inputmode="decimal"></label>
         <label class="lbl">kcal <input class="num" id="wo-kcal" type="number" min="0" step="1" inputmode="decimal" placeholder="if shown"></label>
       </div>
       <div class="row gap">
-        <label class="btn filebtn"><input type="file" id="wo-shot" accept="image/*" hidden>📷 From screenshot</label>
-        <span class="mono muted" id="wo-shot-status"></span>
+        <label class="btn filebtn"><input type="file" id="wo-shot" accept="image/*" hidden><svg><use href="#i-image"/></svg>From screenshot</label>
+        <span class="status" id="wo-shot-status"></span>
       </div>
       <p class="note" id="wo-burn-note"></p>
     </div>
-    <div id="wo-strength" hidden>
-      <div class="row gap">
-        <select id="wo-exercise" class="select" aria-label="Exercise"></select>
-      </div>
+    <div id="wo-strength" class="stack" hidden>
+      <label class="lbl">exercise <select id="wo-exercise" class="select" aria-label="Exercise"></select></label>
       <div id="wo-sets" class="sets"></div>
-      <div class="row gap">
+      <div class="row gap bottom">
         <label class="lbl">kg <input class="num" id="wo-w" type="number" min="0" step="0.5" inputmode="decimal"></label>
         <label class="lbl">reps <input class="num" id="wo-r" type="number" min="1" step="1" inputmode="numeric"></label>
-        <button class="btn" id="wo-addset">＋ set</button>
+        <button class="btn" id="wo-addset"><svg><use href="#i-plus"/></svg>Set</button>
       </div>
-      <p class="note">Sets are what track your 100/100/100. Calories for strength work use the per-kind default (small).</p>
+      <p class="note">Sets are what track your 100/100/100. Calories for strength work use the per-kind default.</p>
     </div>
     <input class="text" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
-    <button class="btn primary" id="wo-log">Log workout</button>
   </div>
-</dialog>
-
-<!-- ============================================================ MORE SHEET -->
-<dialog class="sheet" id="sheet-more">
-  <div class="sheet-head"><h2>More</h2><button class="icon close" data-close aria-label="Close">×</button></div>
-  <div class="sheet-body">
-    <p class="eyebrow">Weigh-in by hand</p>
-    <div class="row gap">
-      <label class="lbl">kg <input class="num" id="bw-kg" type="number" min="30" max="200" step="0.05" inputmode="decimal"></label>
-      <label class="lbl">body fat % <input class="num" id="bw-bf" type="number" min="3" max="60" step="0.1" inputmode="decimal"></label>
-      <button class="btn" id="bw-log">Log</button>
-    </div>
-    <p class="note">Renpho weigh-ins arrive on their own each morning. Use this only when the scale isn't synced.</p>
-    <p class="eyebrow">Products</p>
-    <div class="row gap"><button class="btn" id="btn-product2">＋ New tub or carton</button></div>
-    <p class="eyebrow">Sync</p>
-    <div class="row gap"><button class="btn" id="btn-backup2">Back up now</button><span class="mono muted" id="backup-state2"></span></div>
-  </div>
+  <div class="sheet-foot"><button class="btn primary purple block" id="wo-log">Log workout</button></div>
 </dialog>
 
 <!-- ============================================================ ROW SHEET -->
 <dialog class="sheet" id="sheet-row">
-  <div class="sheet-head"><h2 id="row-title">Entry</h2><button class="icon close" data-close aria-label="Close">×</button></div>
+  <div class="sheet-head"><span class="grip"></span><h2 id="row-title">Entry</h2><button class="icon close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="sheet-body" id="row-body"></div>
 </dialog>
 
 <!-- ============================================================ PRODUCT -->
-<dialog id="product">
+<dialog class="modal" id="product">
   <form method="dialog" class="form" id="product-form">
     <h2>New tub or carton</h2>
     <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" hidden>🏷 Read the label</label>
-      <span class="mono muted" id="prod-status"></span>
+      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" hidden><svg><use href="#i-tag"/></svg>Read the label</label>
+      <span class="status" id="prod-status"></span>
     </div>
     <p class="note">Or type it: milks per 100 ml; whey per gram of powder — 25 g protein in a 32 g scoop is 0.78 per g.</p>
     <div class="row gap">
@@ -242,16 +257,16 @@
       <label class="lbl">protein g <span id="product-per2">/100ml</span> <input class="num" name="protein_g" type="number" min="0" step="0.001" required inputmode="decimal"></label>
     </div>
     <label class="check"><input type="checkbox" name="make_default" checked> make it the default</label>
-    <div class="row gap end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
+    <div class="row gap end"><button class="btn ghost" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
   </form>
 </dialog>
 
 <!-- ============================================================ SETTINGS -->
-<dialog id="settings">
-  <form method="dialog" class="form" id="settings-form">
-    <h2>Settings</h2>
-    <div class="grid2" id="settings-fields"></div>
-    <div class="row gap end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
+<dialog class="sheet" id="settings">
+  <form method="dialog" id="settings-form">
+    <div class="sheet-head"><span class="grip"></span><h2>Settings</h2><button class="icon close" value="cancel" formnovalidate aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+    <div class="sheet-body"><div class="grid2" id="settings-fields"></div></div>
+    <div class="sheet-foot"><button class="btn primary block" value="save">Save</button></div>
   </form>
 </dialog>
 

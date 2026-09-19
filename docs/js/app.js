@@ -21,19 +21,25 @@ const state = { day: todayStr(), settings: {}, data: null, tab: "today", trend: 
   est: null, estFiles: [], fixing: null, fixImages: [], share: 1, label: null, wo: { kind: "revl_move", sets: [], shot: null } };
 
 let toastT;
-function toast(msg, ms = 1800) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms); }
+function toast(msg, ms = 1800, kind = null) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  kind ??= /^(added|valued|saved|logged|shake added|weight logged|.* logged)/i.test(msg) ? "good" : /couldn't|failed|didn't answer/i.test(msg) ? "bad" : "";
+  t.className = "toast " + kind; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms);
+}
+// a short tick on every press, like a game (Android; a no-op elsewhere)
+document.addEventListener("pointerdown", (e) => { if (e.target.closest(".btn,.nav button,.opt,.seg button,.chip,.stat,.icon,.log li")) navigator.vibrate?.(8); }, { passive: true });
+const icon = (name) => `<svg><use href="#i-${name}"/></svg>`;
 
 // ------------------------------------------------------------ sheets
 const sheet = (name) => $(`#sheet-${name}`);
 function openSheet(name) {
   const d = sheet(name); if (!d.open) d.showModal();
   if (name === "meal") renderRecent();
-  if (name === "shake") previewShake();
+  if (name === "shake") { applyLastShake(); previewShake(); }
   if (name === "workout") renderWorkoutSheet();
-  if (name === "more") $("#backup-state2").textContent = backupStateText();
 }
 const closeSheets = () => $$("dialog.sheet").forEach(d => d.open && d.close());
-$$("#actionbar button").forEach(b => b.onclick = () => openSheet(b.dataset.sheet));
+$$("#actionbar [data-sheet]").forEach(b => b.onclick = () => openSheet(b.dataset.sheet));
 $$("dialog.sheet [data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
 $$("dialog.sheet").forEach(d => d.addEventListener("click", (e) => { if (e.target === d) d.close(); }));   // tap the backdrop
 // closing the meal sheet with nothing in progress forgets the share choice (photos and text stay for an accidental close)
@@ -95,8 +101,10 @@ async function loadDay(day = state.day) {
   const trend = eng.weightTrend(allBody.filter(b => b.day >= eng.addDays(todayStr(), -120)), s), latest = trend.at(-1) || null;
   const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   const week = eng.weekSummary(allMeals, allWorkouts, allBody, s, todayStr());
+  const streak = eng.streak(allMeals, todayStr());
   state.all = { meals: allMeals, workouts: allWorkouts, body: allBody };
-  state.data = { day, is_today: day === todayStr(), meals, workouts, totals, target, verdict: v, exp, week,
+  state.data = { day, is_today: day === todayStr(), meals, workouts, totals, target, verdict: v, exp, week, streak,
+    weighed_today: allBody.some(b => b.day === day),
     body: latest ? { ...latest, out_of_bounds: bounded && !(wl <= latest.trend && latest.trend <= wh) } : null,
     pf: parseFloat(s.protein_floor_g), pc: parseFloat(s.protein_ceiling_g) };
   render();
@@ -109,17 +117,24 @@ const workoutLine = (w, { kcal = true } = {}) => {
   return [w.duration_min ? `${w.duration_min} min` : null, w.distance_km ? `${w.distance_km} km` : null, kcal && w.kcal ? `${w.kcal} kcal` : null, w.detail].filter(Boolean).join(" · ");
 };
 
+let lastVerdictOk = null;
 function render() {
   const d = state.data; if (!d) return;
   const dt = new Date(d.day + "T12:00:00+08:00");
-  $("#day-label").textContent = d.is_today ? "Today" : dt.toLocaleDateString("en-SG", { weekday: "short", day: "numeric", month: "short" });
+  $("#day-label b").textContent = d.is_today ? "Today" : dt.toLocaleDateString("en-SG", { weekday: "long" });
+  $("#day-sub").textContent = dt.toLocaleDateString("en-SG", { day: "numeric", month: "short", year: d.is_today ? undefined : "numeric" });
   $("#day-next").disabled = d.is_today;
+
+  // top strip: streak (lit once today counts) and the latest weigh-in
+  const st = $("#streak"); st.querySelector("b").textContent = d.streak.days; st.classList.toggle("on", d.streak.today && d.streak.days > 0);
+  st.title = d.streak.today ? `${d.streak.days}-day streak` : "Log today to keep the streak";
   const chip = $("#weight-chip");
   if (d.body) {
-    chip.hidden = false; chip.className = "weightchip mono" + (d.body.out_of_bounds ? " oob" : "");
-    const when = d.body.day === todayStr() ? "this morning" : d.body.day.slice(5).replace("-", "/");
-    chip.textContent = `${fmt(d.body.weight, 2)} kg` + (d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}% fat` : "") + ` · ${when}`;
-    chip.onclick = () => $(".tab")[1].click();
+    chip.hidden = false; chip.classList.toggle("oob", !!d.body.out_of_bounds);
+    const when = d.body.day === todayStr() ? "today" : d.body.day.slice(5).replace("-", "/");
+    chip.querySelector("b").textContent = `${fmt(d.body.weight, 2)} kg`;
+    chip.querySelector("small").textContent = (d.body.bodyfat != null ? `${fmt(d.body.bodyfat, 1)}% · ` : "") + when;
+    chip.onclick = () => showTab("trend");
   } else chip.hidden = true;
 
   const t = d.totals, v = d.verdict, k = d.target, pending = d.meals.filter(m => m.source === "pending").length;
@@ -132,46 +147,56 @@ function render() {
   $("#k-val").textContent = fmt(t.kcal); $("#k-range").textContent = `${fmt(k.lo)}–${fmt(k.hi)}`;
   $("#k-fill").style.width = Math.min(100, t.kcal / kmax * 100) + "%"; $("#k-fill").className = "fill " + v.kcal;
   $("#k-band").style.left = k.lo / kmax * 100 + "%"; $("#k-band").style.width = (k.hi - k.lo) / kmax * 100 + "%";
-  const sessionNote = k.sessions ? ` · rest base ${fmt(k.base)} + sessions ${fmt(k.sessions)}` : ` · rest day, base ${fmt(k.base)}`;
-  $("#k-foot").textContent = `${v.kcal_msg}${sessionNote} · ${k.source === "measured" ? `measured, ${k.confidence} confidence` : "provisional until the engine has data"}` + (t.kcal ? ` · range ${fmt(t.lo)}–${fmt(t.hi)}` : "");
+  const sessionNote = k.sessions ? `rest base ${fmt(k.base)} + sessions ${fmt(k.sessions)}` : `rest day · base ${fmt(k.base)}`;
+  $("#k-foot").textContent = `${sessionNote} · ${k.source === "measured" ? `measured, ${k.confidence} confidence` : "provisional until the engine has data"}` + (t.kcal ? ` · range ${fmt(t.lo)}–${fmt(t.hi)}` : "");
 
-  const vd = $("#verdict");
-  vd.className = "verdict " + (v.kcal === "over" ? "crit" : v.protein === "short" ? "warn" : "ok");
-  const head = v.ok_to_end ? "Fine to end the day here." : v.protein === "short" ? "Protein first." : "Over the calorie band.";
+  const vd = $("#verdict"), tone = v.kcal === "over" ? "crit" : v.protein === "short" ? "warn" : "ok";
+  const head = !d.meals.length ? "Nothing logged yet." : v.ok_to_end ? "Day complete." : v.protein === "short" ? "Protein first." : "Over the calorie band.";
+  vd.className = "verdict " + (d.meals.length ? tone : "") + (tone === "ok" && lastVerdictOk === false && d.is_today ? " pop" : "");
+  lastVerdictOk = d.is_today ? tone === "ok" : lastVerdictOk;
   vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pending ? `${pending} meal${pending > 1 ? "s" : ""} waiting for AI — totals are short · ` : ""}${v.protein_msg} · ${v.kcal_msg}</small></div>`;
 
+  // daily goals, Duolingo-quest style
+  const goals = [
+    { label: `Protein ${fmt(d.pf)} g`, done: v.protein !== "short" },
+    { label: "Calories", done: d.meals.length > 0 && v.kcal !== "over" && (t.kcal >= k.lo || !d.is_today) },
+    { label: "Weigh-in", done: d.weighed_today },
+    { label: "Session", done: d.workouts.length > 0, opt: true },
+  ];
+  $("#goals").innerHTML = goals.map(g => `<li class="${g.done ? "done" : ""}${g.opt && !g.done ? " opt" : ""}"><span class="box">${g.done ? icon("check") : ""}</span>${esc(g.label)}</li>`).join("");
+
   const rows = [...d.meals.map(m => ({ ...m, _t: "meal" })), ...d.workouts.map(w => ({ ...w, _t: "workout" }))].sort((a, b) => a.at.localeCompare(b.at));
-  $("#log-count").textContent = `${d.meals.length} meals · ${d.workouts.length} workouts`;
-  const log = $("#log"); log.innerHTML = rows.length ? "" : `<li class="empty">Nothing logged yet — use the bar below.</li>`;
+  $("#log-count").textContent = `${d.meals.length} meal${d.meals.length === 1 ? "" : "s"} · ${d.workouts.length} workout${d.workouts.length === 1 ? "" : "s"}`;
+  const log = $("#log"); log.innerHTML = rows.length ? "" : `<li class="empty">Nothing logged yet — Meal, Shake or Workout below.</li>`;
   for (const r of rows) {
     const li = document.createElement("li"), time = (r.at || "").slice(11, 16);
     if (r._t === "meal") {
-      const parked = r.source === "pending";
-      li.className = parked ? "review pending" : r.needs_review ? "review" : "";
-      const sub = [parked ? "waiting for AI — retries on its own · tap to type it in" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "backfill-est" ? "from chat · est." : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : null,
+      const parked = r.source === "pending", isShake = r.source === "shake";
+      li.className = parked ? "pending" : isShake ? "shake" : "";
+      const sub = [time, parked ? "waiting for AI · retries on its own" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" || r.source === "backfill-est" ? "from chat · valued" : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : null,
         r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
-      li.innerHTML = `<span class="t">${time}</span><span class="l">${esc(r.label)}${sub ? `<small>${esc(sub)}</small>` : ""}</span><span class="n p">${parked ? "?" : fmt(r.protein_g, 0) + "g"}</span><span class="n">${parked ? "?" : fmt(r.kcal)}</span><span></span>`;
+      li.innerHTML = `<span class="ic">${icon(isShake ? "shake" : "meal")}</span><span class="l"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span><span class="n"><b>${parked ? "?" : fmt(r.protein_g, 0) + " g"}</b><small>${parked ? "?" : fmt(r.kcal) + " kcal"}</small></span>`;
       li.onclick = () => openRow(r, "meal");
     } else {
       li.className = "workout";
-      li.innerHTML = `<span class="t">${time}</span><span class="l">${labelKind(r.kind)}<small>${esc(workoutLine(r, { kcal: false }))}</small></span><span class="n"></span><span class="n">${r.kcal ? fmt(r.kcal) + " kcal" : ""}</span><span></span>`;
+      li.innerHTML = `<span class="ic">${icon("lift")}</span><span class="l"><b>${labelKind(r.kind)}</b><small>${esc([time, workoutLine(r, { kcal: false })].filter(Boolean).join(" · "))}</small></span><span class="n"><b>${r.kcal ? fmt(r.kcal) : fmt(eng.sessionKcal(r, state.settings))}</b><small>${r.kcal ? "kcal" : "kcal · default"}</small></span>`;
       li.onclick = () => openRow(r, "workout");
     }
     log.appendChild(li);
   }
 
-  // week card
   const w = d.week;
-  $("#week").innerHTML = `<div class="row between"><h2 class="eyebrow">This week</h2><span class="mono muted">${w.days_logged} days logged</span></div>
+  $("#week").innerHTML = `<div class="card-head"><h2>This week</h2><span class="muted">${w.days_logged} day${w.days_logged === 1 ? "" : "s"} logged</span></div>
     <div class="week">
-      <div class="stat"><b>${w.kcal_avg != null ? fmt(w.kcal_avg) : "—"}</b><span>kcal / complete day</span></div>
-      <div class="stat"><b>${w.protein_days}/${w.days_logged || 0}</b><span>days protein hit</span></div>
-      <div class="stat"><b>${w.sessions}</b><span>sessions · ${fmt(w.session_kcal)} kcal</span></div>
-      <div class="stat"><b>${w.weight_to != null ? fmt(w.weight_to, 1) : "—"}</b><span>${w.weight_from != null && w.weight_to != null ? `trend ${w.weight_to - w.weight_from >= 0 ? "+" : ""}${fmt(w.weight_to - w.weight_from, 2)} kg` : "weight trend"}${w.bodyfat != null ? ` · ${fmt(w.bodyfat, 1)}% fat` : ""}</span></div>
+      <div class="stat-tile"><b>${w.kcal_avg != null ? fmt(w.kcal_avg) : "—"}</b><span>kcal / complete day</span></div>
+      <div class="stat-tile"><b>${w.protein_days}/${w.days_logged || 0}</b><span>days protein hit</span></div>
+      <div class="stat-tile"><b>${w.sessions}</b><span>sessions · ${fmt(w.session_kcal)} kcal</span></div>
+      <div class="stat-tile"><b>${w.weight_to != null ? fmt(w.weight_to, 1) : "—"}</b><span>${w.weight_from != null && w.weight_to != null ? `trend ${w.weight_to - w.weight_from >= 0 ? "+" : ""}${fmt(w.weight_to - w.weight_from, 2)} kg` : "weight trend"}${w.bodyfat != null ? ` · ${fmt(w.bodyfat, 1)}% fat` : ""}</span></div>
     </div>`;
   $("#est-hint").hidden = !!state.settings.gemini_key;
   showSyncWarn();
 }
+function showTab(name) { const t = $$(".tab").find(x => x.dataset.tab === name); if (t) t.click(); }
 
 // ------------------------------------------------------------ meals
 /** share scales the numbers; share_frac is what the row shows (defaults to share; pass it when the numbers are already scaled). */
@@ -189,7 +214,7 @@ function renderRecent() {
   wrap.hidden = !list.length;
   for (const f of list) {
     const w = document.createElement("div"); w.className = "rchip";
-    w.innerHTML = `<button class="chip">${esc(f.label)}<small>${fmt(f.protein_g, 0)}g · ${fmt(f.kcal)} kcal · ×${f.n}</small></button><button class="rx" aria-label="Hide">×</button>`;
+    w.innerHTML = `<button class="chip">${esc(f.label)}<small>${fmt(f.protein_g, 0)} g · ${fmt(f.kcal)} kcal · ×${f.n}</small></button><button class="rx" aria-label="Hide">${icon("close")}</button>`;
     w.querySelector(".chip").onclick = async (e) => { e.currentTarget.disabled = true; await insertMeal({ label: f.label, kcal: f.kcal, lo: f.kcal_lo, hi: f.kcal_hi, protein: f.protein_g, source: "repeat" }); toast(`Added ${f.label}`); closeSheets(); changed(); };
     w.querySelector(".rx").onclick = async () => { const list = hiddenRecents(); list.push(normFoodLabel(f.label)); await db.setSetting("recent_hidden", JSON.stringify(list)); state.settings.recent_hidden = JSON.stringify(list); renderRecent(); toast("Hidden from regulars"); };
     box.appendChild(w);
@@ -209,6 +234,21 @@ function onPhotos(e) {
 $("#est-camera").addEventListener("change", onPhotos);
 $("#est-gallery").addEventListener("change", onPhotos);
 
+// the sticky footer holds the one primary action for the current step
+const FOOT = {
+  estimate: `<button class="btn primary block" id="est-go">Estimate</button>`,
+  result: `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button>`,
+  label: `<button class="btn ghost" id="label-discard">Discard</button><button class="btn primary" id="label-add">Add to log</button>`,
+};
+const setMealFoot = (mode) => { $("#meal-foot").innerHTML = FOOT[mode]; };
+$("#meal-foot").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.id === "est-go") { if (!state.estFiles.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); }
+  else if (b.id === "est-discard" || b.id === "label-discard") resetEstimate();
+  else if (b.id === "est-add") addEstimate();
+  else if (b.id === "label-add") state.labelAdd?.();
+};
+
 // label photo -> exact values -> servings -> add
 $("#est-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -219,20 +259,19 @@ $("#est-label").addEventListener("change", async (e) => {
     const per = L.basis === "serving" ? `per serving (${esc(L.serving_size)})` : `per ${L.basis}`;
     const box = $("#est-result"); box.hidden = false;
     box.innerHTML = `<div class="estcard">
-      <div class="row between"><b>${esc(L.product)}</b><span class="pill ${L.confidence === "high" ? "good" : L.confidence === "medium" ? "medium" : "low"}">label</span></div>
+      <div class="dish"><b>${esc(L.product)}</b><span class="pill ${L.confidence === "high" ? "good" : L.confidence === "medium" ? "medium" : "low"}">label</span></div>
       <div class="thumbs"><img src="data:image/jpeg;base64,${thumb}" alt=""></div>
       <p><b>${per}:</b> ${fmt(L.kcal)} kcal · ${fmt(L.protein_g, 1)} g protein${L.servings_per_pack ? ` · ${L.servings_per_pack} servings per pack` : ""}</p>
-      <div class="row gap">
+      <div class="row gap bottom">
         <label class="lbl">${L.basis === "serving" ? "servings eaten" : L.basis === "100ml" ? "ml eaten" : "g eaten"} <input class="num" id="label-qty" type="number" min="0" step="any" value="${L.basis === "serving" ? 1 : (L.serving_g_or_ml || 100)}" inputmode="decimal"></label>
-        <span class="mono result" id="label-calc"></span>
+        <div class="big" id="label-calc"></div>
       </div>
-      <div class="row gap end"><button class="btn" id="label-discard">Discard</button><button class="btn primary" id="label-add">Add to log</button></div>
     </div>`;
     const calc = () => { const q = parseFloat($("#label-qty").value) || 0, mult = L.basis === "serving" ? q : q / 100;
-      const kc = L.kcal * mult, p = L.protein_g * mult; $("#label-calc").textContent = `${fmt(p, 1)} g · ${fmt(kc)} kcal`; return { kc, p, q }; };
+      const kc = L.kcal * mult, p = L.protein_g * mult; $("#label-calc").innerHTML = `<span class="p">${fmt(p, 1)} g</span> · ${fmt(kc)}`; return { kc, p, q }; };
     calc(); $("#label-qty").addEventListener("input", calc);
-    $("#label-discard").onclick = resetEstimate;
-    $("#label-add").onclick = async () => {
+    setMealFoot("label");
+    state.labelAdd = async () => {
       const { kc, p, q } = calc();
       await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: "label", share: 1, detail: { label: L } });
       toast(`Added ${L.product}`); resetEstimate(); closeSheets(); changed();
@@ -260,7 +299,7 @@ const looksPartial = (m) => m.source === "backfill" && m.kcal < 150 && rawText(m
 async function runEstimate(correction = null) {
   const prior = correction != null ? state.est : null;
   const text = correction ?? $("#est-text").value;
-  $("#est-status").textContent = prior ? "refining…" : "estimating…"; $("#est-go").disabled = true;
+  $("#est-status").textContent = prior ? "refining…" : "estimating…"; if ($("#est-go")) $("#est-go").disabled = true;
   try {
     const args = { apiKey: state.settings.gemini_key, images: prior ? [] : state.estFiles, text, share: state.share,
       prior, priorImages: prior ? prior.images : state.fixImages, onStatus: (m) => $("#est-status").textContent = m };
@@ -272,10 +311,9 @@ async function runEstimate(correction = null) {
     row.id = await db.add("estimates", row);
     state.est = { ...row, images: out.images.length ? out.images : (prior ? prior.images : state.fixImages) };
     renderEstimate();
-    const u = out.usage; $("#est-status").textContent = `${row.model} · ${fmt(u.promptTokenCount || 0)} in / ${fmt(u.candidatesTokenCount || 0)} out · free tier`;
+    const u = out.usage; $("#est-status").textContent = `${row.model} · ${fmt((u.promptTokenCount || 0) + (u.candidatesTokenCount || 0))} tokens · free tier`;
     if (!state.fixing) retryPending({ force: true });                // Gemini answers again: settle anything parked
   } catch (e) {
-    $("#est-go").disabled = false;
     if (prior) { renderEstimate(); $("#est-status").textContent = "Refine failed — " + e.message; return; }   // the earlier estimate stands
     if (e.config) {
       $("#est-status").textContent = ""; $("#est-result").hidden = false;
@@ -283,7 +321,7 @@ async function runEstimate(correction = null) {
       return;
     }
     await parkEstimate(text, e);
-  } finally { $("#est-go").disabled = false; }
+  } finally { if ($("#est-go")) $("#est-go").disabled = false; }
 }
 
 /* Gemini failed, so the meal goes into the log NOW as an unvalued row, with its text and photos kept.
@@ -335,33 +373,33 @@ async function retryPending({ force = false } = {}) {
 async function settlePending(mealId, status, from = null) {
   for (const p of await db.all("estimates")) if (p.meal_id === mealId && (from ? p.status === from : (p.status === "pending" || p.status === "fixing"))) await db.put("estimates", { ...p, status, images: status === "pending" ? p.images : [] });
 }
-$("#est-go").onclick = () => { if (!state.estFiles.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); };
 
 function renderEstimate() {
   const e = state.est, r = e.result, box = $("#est-result"); box.hidden = false;
   const items = r.items.map(i => `<li><span>${esc(i.name)}<small>${esc(i.portion)} · ${i.basis === "reference" ? "table" : "model"} · ${i.confidence}</small></span><span class="mono p">${fmt(i.protein_g, 0)}g</span><span class="mono">${fmt(i.kcal)}</span></li>`).join("");
   const pill = r.confidence === "high" ? "good" : r.confidence === "medium" ? "medium" : "low";
   box.innerHTML = `<div class="estcard">
-    <div class="row between"><b>${esc(r.dish)}</b><span class="pill ${pill}">${r.confidence}</span></div>
-    <div class="big mono"><span class="p">${fmt(r.protein_g, 0)} g</span> · ${fmt(r.kcal)} kcal <small>${fmt(r.kcal_lo)}–${fmt(r.kcal_hi)}</small></div>
+    <div class="dish"><b>${esc(r.dish)}</b><span class="pill ${pill}">${r.confidence}</span></div>
+    <div class="big"><span class="p">${fmt(r.protein_g, 0)} g</span> · ${fmt(r.kcal)} kcal <small>${fmt(r.kcal_lo)}–${fmt(r.kcal_hi)}</small></div>
     ${e.thumb ? `<div class="thumbs"><img src="data:image/jpeg;base64,${e.thumb}" alt=""></div>` : ""}
     <ul class="items">${items}</ul>
     ${r.model_share > 0.5 ? `<p><b>Note:</b> most of this came from the model's own figures, not the reference table — treat as rough.</p>` : ""}
     ${r.assumptions?.length ? `<p><b>Assumed:</b> ${esc(r.assumptions.join("; "))}</p>` : ""}
     ${r.grounding?.length ? `<p><b>Based on:</b> ${esc(r.grounding.join("; "))}</p>` : ""}
     ${r.tighten ? `<p><b>Would tighten it:</b> ${esc(r.tighten)}</p>` : ""}
-    <div class="row gap"><input class="text grow" id="est-refine" placeholder="Correct it — “only ate half the rice”, “2 wings not 5”"><button class="btn" id="est-refine-go">Refine</button></div>
-    <div class="row gap end"><button class="btn" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button></div>
+    <div class="refine"><input class="text" id="est-refine" placeholder="Correct it — “only ate half the rice”"><button class="btn" id="est-refine-go">Refine</button></div>
   </div>`;
   $("#est-refine-go").onclick = () => { const c = $("#est-refine").value.trim(); if (c) runEstimate(c); };
-  $("#est-discard").onclick = resetEstimate;
-  $("#est-add").onclick = async () => {
-    let id = null;
-    if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await settlePending(meal.id, "done"); await valueRow(meal, r, e.id, /^(pending|photo)$/.test(meal.source) ? "photo" : "backfill-ai"); id = meal.id; } }
-    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
-    await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
-    toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
-  };
+  setMealFoot("result");
+  box.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+async function addEstimate() {
+  const e = state.est, r = e?.result; if (!r) return;
+  let id = null;
+  if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await settlePending(meal.id, "done"); await valueRow(meal, r, e.id, /^(pending|photo)$/.test(meal.source) ? "photo" : "backfill-ai"); id = meal.id; } }
+  if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
+  await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
+  toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
 }
 function resetEstimate() {
   if (state.fixing) settlePending(state.fixing, "pending", "fixing");                                   // sheet gave up on it: back to the retry queue (no-op once settled)
@@ -369,7 +407,7 @@ function resetEstimate() {
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
   $$("#est-thumbs img").forEach(i => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
   $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = "";
-  $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = "";
+  $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = ""; state.labelAdd = null; setMealFoot("estimate");
 }
 async function startFix(meal) {
   resetEstimate(); state.fixing = meal.id; openSheet("meal");
@@ -399,15 +437,15 @@ function openRow(r, kind) {
   $("#row-title").textContent = kind === "meal" ? "Meal" : labelKind(r.kind);
   if (kind === "meal") {
     body.innerHTML = `<div class="rowsheet">
-      <p class="meta">${r.at.slice(0, 10)} · ${esc(r.source)}${r.needs_review || looksPartial(r) ? " · not valued yet" : ""}</p>
+      <p class="meta">${r.at.slice(0, 10)} · ${esc(r.source === "pending" ? "waiting for AI" : r.source)}${r.needs_review || looksPartial(r) ? " · not valued yet" : ""}</p>
       <label class="lbl">label <input class="text" id="rw-label" value="${esc(r.label)}"></label>
       <div class="row gap">
-        <label class="lbl">kcal <input class="num" id="rw-kcal" type="number" step="1" value="${r.kcal}" inputmode="decimal"></label>
-        <label class="lbl">protein g <input class="num" id="rw-p" type="number" step="0.1" value="${r.protein_g}" inputmode="decimal"></label>
+        <label class="lbl">kcal <input class="num" id="rw-kcal" type="number" step="any" value="${r.kcal}" inputmode="decimal"></label>
+        <label class="lbl">protein g <input class="num" id="rw-p" type="number" step="any" value="${r.protein_g}" inputmode="decimal"></label>
         <label class="lbl">time <input class="num" id="rw-time" type="time" value="${r.at.slice(11, 16)}"></label>
       </div>
-      <div class="row gap"><button class="btn" id="rw-again">Log again now</button>${(r.source || "").startsWith("backfill") || r.needs_review ? `<button class="btn" id="rw-ai">Value with AI</button>` : ""}</div>
-      <div class="row gap"><button class="btn danger" id="rw-del">Delete</button><button class="btn primary" id="rw-save">Save</button></div>
+      <div class="row gap"><button class="btn" id="rw-again">Log again</button>${(r.source || "").startsWith("backfill") || r.needs_review ? `<button class="btn" id="rw-ai">Value with AI</button>` : ""}</div>
+      <div class="row gap"><button class="btn danger" id="rw-del">Delete</button><button class="btn primary grow" id="rw-save">Save</button></div>
     </div>`;
     $("#rw-save").onclick = async () => {
       const kcal = parseFloat($("#rw-kcal").value) || 0, ratio = r.kcal ? kcal / r.kcal : 1;
@@ -427,7 +465,7 @@ function openRow(r, kind) {
         <label class="lbl">time <input class="num" id="rw-time" type="time" value="${r.at.slice(11, 16)}"></label>
       </div>
       <label class="lbl">note <input class="text" id="rw-note" value="${esc(r.detail || "")}"></label>
-      <div class="row gap"><button class="btn danger" id="rw-del">Delete</button><button class="btn primary" id="rw-save">Save</button></div>
+      <div class="row gap"><button class="btn danger" id="rw-del">Delete</button><button class="btn primary grow" id="rw-save">Save</button></div>
     </div>`;
     $("#rw-save").onclick = async () => {
       const kcal = parseFloat($("#rw-kcal").value);
@@ -452,6 +490,12 @@ async function loadProducts() {
   previewShake();
 }
 const product = (id) => state.products.find(p => p.id === +id);
+function applyLastShake() {
+  let last = null; try { last = JSON.parse(state.settings.shake_last || "null"); } catch {}
+  if (!last) return;
+  if (last.whey) $("#whey").value = last.whey; if (last.milk) $("#milk").value = last.milk; if (last.creatine != null) $("#creatine").value = last.creatine;
+  if (product(last.whey_id)) $("#whey-id").value = last.whey_id; if (product(last.milk_id)) $("#milk-id").value = last.milk_id;
+}
 function previewShake() {
   const w = product($("#whey-id").value), m = product($("#milk-id").value);
   if (!w || !m) { $("#shake-result").textContent = "—"; return; }
@@ -463,10 +507,11 @@ $("#btn-shake").onclick = async () => {
   const w = product($("#whey-id").value), m = product($("#milk-id").value); if (!w || !m) return toast("Pick a whey and a milk");
   const s = shake(+$("#whey").value || 0, +$("#milk").value || 0, w, m, +$("#creatine").value || 0);
   await insertMeal({ label: s.label, kcal: s.kcal, lo: s.kcal_lo, hi: s.kcal_hi, protein: s.protein_g, source: "shake", detail: { whey_g: +$("#whey").value, milk_ml: +$("#milk").value, whey_id: w.id, milk_id: m.id, breakdown: s.breakdown } });
+  await db.setSetting("shake_last", JSON.stringify({ whey: +$("#whey").value, milk: +$("#milk").value, creatine: +$("#creatine").value, whey_id: w.id, milk_id: m.id }));   // next time opens on this
   toast("Shake added"); closeSheets(); changed();
 };
 const openProduct = () => { $("#product-form").reset(); $("#prod-status").textContent = ""; syncPer(); $("#product").showModal(); };
-$("#btn-product").onclick = openProduct; $("#btn-product2").onclick = openProduct;
+$("#btn-product").onclick = openProduct;
 const syncPer = () => { const per = $("#product-kind").value === "whey" ? "/g" : "/100ml"; $("#product-per").textContent = per; $("#product-per2").textContent = per; };
 $("#product-kind").addEventListener("change", syncPer);
 $("#prod-label").addEventListener("change", async (e) => {
@@ -502,22 +547,22 @@ $("#product-form").onsubmit = async (e) => {
 // ------------------------------------------------------------ workouts
 const CARDIO = new Set(["revl_move", "revl_sweat", "revl_perform", "run", "swim"]);
 function renderWorkoutSheet() {
-  $$("#wo-kinds .chip").forEach(c => c.classList.toggle("on", c.dataset.kind === state.wo.kind));
+  $$("#wo-kinds .opt").forEach(c => c.classList.toggle("on", c.dataset.kind === state.wo.kind));
   const strength = state.wo.kind === "lift";
   $("#wo-cardio").hidden = strength; $("#wo-strength").hidden = !strength;
   $("#wo-km").parentElement.hidden = !["run", "swim"].includes(state.wo.kind);
   const dflt = parseFloat(state.settings["burn_" + state.wo.kind] || state.settings.burn_other || 0);
-  $("#wo-burn-note").textContent = `Without a kcal figure, ${labelKind(state.wo.kind)} counts as ${fmt(dflt)} kcal (⚙ to change). A screenshot with calories overrides it.`;
+  $("#wo-burn-note").textContent = `Without a kcal figure, ${labelKind(state.wo.kind)} counts as ${fmt(dflt)} kcal (change it in Settings). A screenshot with calories overrides it.`;
   if (!$("#wo-exercise").options.length) for (const x of EXERCISES) { const o = document.createElement("option"); o.value = x; o.textContent = x; $("#wo-exercise").appendChild(o); }
   const box = $("#wo-sets"); box.innerHTML = "";
   state.wo.sets.forEach((s, i) => {
     const el = document.createElement("div"); el.className = "set";
-    el.innerHTML = `<span>${i + 1}</span><span>${esc(s.exercise)}</span><span>${s.weight} kg × ${s.reps} <span class="e1">e1RM ${e1rm(s.weight, s.reps)}</span></span><button class="x" aria-label="Remove">×</button>`;
+    el.innerHTML = `<span>${i + 1}</span><span>${esc(s.exercise)}</span><span>${s.weight} kg × ${s.reps}<span class="e1">e1RM ${e1rm(s.weight, s.reps)}</span></span><button class="x" aria-label="Remove">${icon("close")}</button>`;
     el.querySelector(".x").onclick = () => { state.wo.sets.splice(i, 1); renderWorkoutSheet(); };
     box.appendChild(el);
   });
 }
-$$("#wo-kinds .chip").forEach(c => c.onclick = () => { state.wo.kind = c.dataset.kind; renderWorkoutSheet(); });
+$$("#wo-kinds .opt").forEach(c => c.onclick = () => { state.wo.kind = c.dataset.kind; renderWorkoutSheet(); });
 $("#wo-addset").onclick = () => {
   const w = parseFloat($("#wo-w").value), r = parseInt($("#wo-r").value, 10);
   if (!Number.isFinite(w) || !r) return toast("Weight and reps");
@@ -564,7 +609,6 @@ $("#bw-log").onclick = async () => {
   } catch (e) { return toast("Couldn't save the weigh-in: " + (e?.message || e?.name || "unknown error"), 4000); }
   $("#bw-kg").value = ""; $("#bw-bf").value = ""; toast("Weight logged"); closeSheets(); changed();
 };
-$("#btn-backup2").onclick = (e) => { closeSheets(); $("#btn-backup").click(); };
 
 // ------------------------------------------------------------ day nav
 const shift = (n) => loadDay(eng.addDays(state.day, n));
@@ -604,7 +648,7 @@ function setupCanvas(c, H) {
 function drawSeries(c, H, pts, key, trendKey, opts) {
   const { ctx, W, col } = setupCanvas(c, H);
   ctx.clearRect(0, 0, W, H);
-  if (!pts.length) { ctx.fillStyle = col("--faint"); ctx.font = "13px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText(opts.empty, W / 2, H / 2); return; }
+  if (!pts.length) { ctx.fillStyle = col("--faint"); ctx.font = "13px " + col("--font"); ctx.textAlign = "center"; ctx.fillText(opts.empty, W / 2, H / 2); return; }
   const pad = { l: 40, r: 48, t: 16, b: 24 };
   const day0 = new Date(pts[0].day), day1 = new Date(todayStr()), span = Math.max(6, (day1 - day0) / 864e5);
   const x = (d) => pad.l + ((new Date(d) - day0) / 864e5) / span * (W - pad.l - pad.r);
@@ -614,15 +658,15 @@ function drawSeries(c, H, pts, key, trendKey, opts) {
   const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
   if (opts.band) {
     ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.12; ctx.fillRect(pad.l, y(opts.band[1]), W - pad.l - pad.r, y(opts.band[0]) - y(opts.band[1])); ctx.globalAlpha = 1;
-    ctx.fillStyle = col("--ok"); ctx.font = "10px " + col("--mono"); ctx.textAlign = "left";
+    ctx.fillStyle = col("--ok"); ctx.font = "10px " + col("--font"); ctx.textAlign = "left";
     ctx.fillText(String(opts.band[1]), W - pad.r + 4, y(opts.band[1]) + 3); ctx.fillText(String(opts.band[0]), W - pad.r + 4, y(opts.band[0]) + 3);
   }
   if (opts.creatine) {
     const x0 = Math.max(pad.l, x(opts.creatine[0])), x1 = Math.min(W - pad.r, x(opts.creatine[1]));
     if (x1 > x0) { ctx.strokeStyle = col("--faint"); ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x0, 6); ctx.lineTo(x1, 6); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle = col("--faint"); ctx.font = "9px " + col("--mono"); ctx.textAlign = "center"; ctx.fillText("creatine settling", (x0 + x1) / 2, 14); }
+      ctx.fillStyle = col("--faint"); ctx.font = "9px " + col("--font"); ctx.textAlign = "center"; ctx.fillText("creatine settling", (x0 + x1) / 2, 14); }
   }
-  const step = opts.step; ctx.font = "10px " + col("--mono"); ctx.strokeStyle = col("--line"); ctx.lineWidth = 1; ctx.fillStyle = col("--faint"); ctx.textAlign = "right";
+  const step = opts.step; ctx.font = "10px " + col("--font"); ctx.strokeStyle = col("--line"); ctx.lineWidth = 1; ctx.fillStyle = col("--faint"); ctx.textAlign = "right";
   for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) { ctx.beginPath(); ctx.moveTo(pad.l, y(v)); ctx.lineTo(W - pad.r, y(v)); ctx.stroke(); ctx.fillText(opts.fmt(v), pad.l - 6, y(v) + 3); }
   ctx.textAlign = "left"; ctx.fillText(pts[0].day.slice(5).replace("-", "/"), pad.l, H - 6);
   const mid = new Date((day0.getTime() + day1.getTime()) / 2).toLocaleDateString("en-CA", { timeZone: SGT });
@@ -633,7 +677,7 @@ function drawSeries(c, H, pts, key, trendKey, opts) {
   for (const p of pts) { ctx.beginPath(); ctx.arc(x(p.day), y(p[key]), 3, 0, Math.PI * 2); ctx.fill(); } ctx.globalAlpha = 1;
   const last = pts.at(-1), lv = trendKey ? last[trendKey] : last[key];
   ctx.fillStyle = col(opts.color); ctx.beginPath(); ctx.arc(x(last.day), y(lv), 4.5, 0, Math.PI * 2); ctx.fill();
-  ctx.font = "11px " + col("--mono"); ctx.textAlign = "left"; ctx.fillText(opts.fmt(lv), x(last.day) + 8, y(lv) - 6);
+  ctx.font = "11px " + col("--font"); ctx.textAlign = "left"; ctx.fillText(opts.fmt(lv), x(last.day) + 8, y(lv) - 6);
 }
 function drawChart() {
   const pts = state.trend.points, wl = state.trend.weight_lo, wh = state.trend.weight_hi;
@@ -659,8 +703,8 @@ function renderExpenditure() {
   const cur = state.trend.current, el = $("#expenditure");
   const pill = `<span class="pill ${cur.confidence}">${cur.confidence === "none" ? "provisional" : cur.confidence + " confidence"}</span>`;
   el.innerHTML = cur.source === "provisional"
-    ? `<h2 class="eyebrow">Expenditure</h2><div class="exp"><div class="big">${fmt(cur.base)} <small>kcal rest-day base · provisional</small></div>${pill}<p>${esc(cur.note)}</p><p>After ~7 complete days with weigh-ins outside the creatine window, this comes from your own intake and weight trend, not a formula.</p></div>`
-    : `<h2 class="eyebrow">Expenditure</h2><div class="exp"><div class="big">${fmt(cur.tdee)} <small>kcal/day measured average</small></div>${pill}
+    ? `<div class="card-head"><h2>Expenditure</h2>${pill}</div><div class="exp"><div class="big">${fmt(cur.base)} <small>kcal rest-day base · provisional</small></div><p>${esc(cur.note)}</p><p>After ~7 complete days with weigh-ins outside the creatine window, this comes from your own intake and weight trend, not a formula.</p></div>`
+    : `<div class="card-head"><h2>Expenditure</h2>${pill}</div><div class="exp"><div class="big">${fmt(cur.tdee)} <small>kcal/day measured average</small></div>
       <p>Of that, ~${fmt(cur.session_avg)}/day was the training you logged in the window, so rest-day expenditure is ~${fmt(cur.rest_base)}. Minus the deficit: <b>${fmt(cur.base)} on a rest day</b>, plus each session's burn on the days you train.</p>
       <p>${esc(cur.note)}</p><p>As of ${cur.as_of}. Recomputed on every load.</p></div>`;
 }
@@ -668,9 +712,9 @@ function renderLifts() {
   const el = $("#lifts"), rows = liftProgress(state.all.workouts);
   el.hidden = !rows.length;
   if (!rows.length) return;
-  el.innerHTML = `<h2 class="eyebrow">Lifts</h2>` + rows.map(r => `<div class="lift">
+  el.innerHTML = `<div class="card-head"><h2>Lifts</h2><span class="muted">e1RM vs goal</span></div>` + rows.map(r => `<div class="lift">
     <div>${esc(r.exercise)}<small>best ${esc(r.best_set)} on ${r.best_day} · last ${esc(r.last_set)} · ${r.sessions} session${r.sessions > 1 ? "s" : ""}</small></div>
-    <div class="mono"><b>${fmt(r.best, 1)}</b> <small>e1RM${r.goal ? ` / ${r.goal}` : ""}</small></div>
+    <div class="val"><b>${fmt(r.best, 1)}</b><small>e1RM${r.goal ? ` / ${r.goal}` : ""}</small></div>
     ${r.goal ? `<div class="goalbar"><i style="width:${Math.min(100, r.best / r.goal * 100)}%"></i></div>` : ""}
   </div>`).join("");
 }
@@ -732,7 +776,7 @@ const SETTINGS = [
 ];
 $("#btn-settings").onclick = async () => {
   const s = await db.allSettings();
-  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") ? "wide" : ""}">${l}<input class="num" type="${type}" name="${k}" value="${esc(s[k] ?? "")}" autocomplete="off"></label>`).join("");
+  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || k === "ai_model" ? "wide" : ""}">${l}<input class="num" type="${type}" name="${k}" value="${esc(s[k] ?? "")}" autocomplete="off"></label>`).join("");
   $("#settings").showModal();
 };
 $("#settings-form").onsubmit = async (e) => {
