@@ -106,8 +106,12 @@ arithmetic from that table — deterministic, same answer every time. The model
 only supplies its own figures for things the table doesn't know, and those
 are flagged. Name the venue and the model uses the published figures it knows
 for chains; Google-grounded search is not on the free tier for the 3.x models.
-Free-tier quotas are per model per day: when one is used up the app tries the
-next Flash model, and it waits out a per-minute limit on its own.
+Free-tier quotas are per model per day: when one is used up, or a model is
+overloaded (503), the app tries the next Flash model and remembers which one
+answered. If none does, the meal still goes into the log at once as an
+unvalued row with its text and photos kept; the app values it on its own
+when Gemini is back (on open, on return to the app, every 2 min while open),
+or you tap the row and type it in. A logged meal is never lost to an outage.
 
 **Sessions move calories between days; they never inflate the week.** Each
 logged workout raises *that day's* target by its burn — measured kcal when you

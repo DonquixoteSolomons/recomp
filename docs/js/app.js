@@ -3,7 +3,7 @@
 import * as db from "./db.js";
 import { DEFAULT_PRODUCTS, shake, recentFoods, normFoodLabel, EXERCISES, e1rm, liftProgress, cleanBackfillLabel } from "./foods.js";
 import * as eng from "./engine.js";
-import { estimate as runGemini, readLabel, readWorkout, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
+import { estimate as runGemini, readLabel, readWorkout, prepareImage, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -18,7 +18,7 @@ const atFor = (hm) => `${state.day}T${hm || (state.day === todayStr() ? nowHM() 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
 const state = { day: todayStr(), settings: {}, data: null, tab: "today", trend: null, products: [],
-  est: null, estFiles: [], fixing: null, share: 1, label: null, wo: { kind: "revl_move", sets: [], shot: null } };
+  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, label: null, wo: { kind: "revl_move", sets: [], shot: null } };
 
 let toastT;
 function toast(msg, ms = 1800) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms); }
@@ -52,7 +52,9 @@ async function flushBackup() {
     $("#backup-state").textContent = "backed up " + new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }); await syncOk();
   } catch (e) { $("#backup-state").textContent = "backup failed: " + e.message; await syncFailed("Backup", e); }
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(backupT); flushBackup(); } });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(backupT); flushBackup(); } else retryPending(); });
+setInterval(() => document.visibilityState === "visible" && retryPending(), 120_000);
+window.addEventListener("online", () => retryPending({ force: true }));
 async function changed() { await loadDay(); await markDirty(); }
 
 async function syncFailed(what, e) { await db.setSetting("gh_error", `${what} failed — ${e.message}${e.auth ? ". Fix the token or repo in ⚙ Settings." : ""}`); showSyncWarn(); }
@@ -102,7 +104,7 @@ function render() {
     chip.onclick = () => $(".tab")[1].click();
   } else chip.hidden = true;
 
-  const t = d.totals, v = d.verdict, k = d.target;
+  const t = d.totals, v = d.verdict, k = d.target, pending = d.meals.filter(m => m.source === "pending").length;
   $("#p-val").textContent = fmt(t.protein, 0); $("#p-range").textContent = `${fmt(d.pf)}–${fmt(d.pc)}`;
   const pmax = d.pc * 1.25;
   $("#p-fill").style.width = Math.min(100, t.protein / pmax * 100) + "%"; $("#p-fill").className = "fill " + v.protein;
@@ -118,7 +120,7 @@ function render() {
   const vd = $("#verdict");
   vd.className = "verdict " + (v.kcal === "over" ? "crit" : v.protein === "short" ? "warn" : "ok");
   const head = v.ok_to_end ? "Fine to end the day here." : v.protein === "short" ? "Protein first." : "Over the calorie band.";
-  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${v.protein_msg} · ${v.kcal_msg}</small></div>`;
+  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pending ? `${pending} meal${pending > 1 ? "s" : ""} waiting for AI — totals are short · ` : ""}${v.protein_msg} · ${v.kcal_msg}</small></div>`;
 
   const rows = [...d.meals.map(m => ({ ...m, _t: "meal" })), ...d.workouts.map(w => ({ ...w, _t: "workout" }))].sort((a, b) => a.at.localeCompare(b.at));
   $("#log-count").textContent = `${d.meals.length} meals · ${d.workouts.length} workouts`;
@@ -126,10 +128,11 @@ function render() {
   for (const r of rows) {
     const li = document.createElement("li"), time = (r.at || "").slice(11, 16);
     if (r._t === "meal") {
-      li.className = r.needs_review ? "review" : "";
-      const sub = [r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "backfill-est" ? "from chat · est." : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : null,
+      const parked = r.source === "pending";
+      li.className = parked ? "review pending" : r.needs_review ? "review" : "";
+      const sub = [parked ? "waiting for AI — retries on its own · tap to type it in" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" ? "from chat · AI" : r.source === "backfill-est" ? "from chat · est." : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : null,
         r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
-      li.innerHTML = `<span class="t">${time}</span><span class="l">${esc(r.label)}${sub ? `<small>${esc(sub)}</small>` : ""}</span><span class="n p">${fmt(r.protein_g, 0)}g</span><span class="n">${fmt(r.kcal)}</span><span></span>`;
+      li.innerHTML = `<span class="t">${time}</span><span class="l">${esc(r.label)}${sub ? `<small>${esc(sub)}</small>` : ""}</span><span class="n p">${parked ? "?" : fmt(r.protein_g, 0) + "g"}</span><span class="n">${parked ? "?" : fmt(r.kcal)}</span><span></span>`;
       li.onclick = () => openRow(r, "meal");
     } else {
       li.className = "workout";
@@ -192,8 +195,8 @@ $("#est-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#est-status").textContent = "reading label…";
   try {
-    const { data: L, thumb } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#est-status").textContent = m }));
-    state.label = L; $("#est-status").textContent = `label · ${L.confidence}`;
+    const { data: L, thumb, model: used } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: (m) => $("#est-status").textContent = m }));
+    await rememberModel(used); state.label = L; $("#est-status").textContent = `label · ${L.confidence}`;
     const per = L.basis === "serving" ? `per serving (${esc(L.serving_size)})` : `per ${L.basis}`;
     const box = $("#est-result"); box.hidden = false;
     box.innerHTML = `<div class="estcard">
@@ -223,10 +226,14 @@ async function withModelFallback(fn) {
   try { return await fn(); }
   catch (e) {
     if (!e.suggestedModel) throw e;
-    await db.setSetting("ai_model", e.suggestedModel); state.settings.ai_model = e.suggestedModel; toast(`Switched model to ${e.suggestedModel}`);
+    await db.setSetting("ai_model", e.suggestedModel); state.settings.ai_model = e.suggestedModel;
+    await db.setSetting("ai_model_ok", ""); state.settings.ai_model_ok = ""; toast(`Switched model to ${e.suggestedModel}`);
     return fn();
   }
 }
+// the model that last answered goes first, so a model that is down for days costs one failed call, not one per meal
+const modelToUse = () => state.settings.ai_model_ok || state.settings.ai_model || DEFAULT_MODEL;
+async function rememberModel(m) { if (m && m !== modelToUse()) { await db.setSetting("ai_model_ok", m); state.settings.ai_model_ok = m; } }
 
 const rawText = (m) => { let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } } return d?.raw || m.label; };
 const looksPartial = (m) => m.source === "backfill" && m.kcal < 150 && rawText(m).length > 25;
@@ -237,8 +244,9 @@ async function runEstimate(correction = null) {
   $("#est-status").textContent = prior ? "refining…" : "estimating…"; $("#est-go").disabled = true;
   try {
     const args = { apiKey: state.settings.gemini_key, images: prior ? [] : state.estFiles, text, share: state.share,
-      prior, priorImages: prior ? prior.images : [], onStatus: (m) => $("#est-status").textContent = m };
-    const out = await withModelFallback(() => runGemini({ ...args, model: state.settings.ai_model || DEFAULT_MODEL }));
+      prior, priorImages: prior ? prior.images : state.fixImages, onStatus: (m) => $("#est-status").textContent = m };
+    const out = await withModelFallback(() => runGemini({ ...args, model: modelToUse() }));
+    await rememberModel(out.model);
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share: state.share, model: out.model, ident: out.ident, result: out.result,
       thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
@@ -246,10 +254,67 @@ async function runEstimate(correction = null) {
     state.est = { ...row, images: out.images.length ? out.images : (prior?.images || []) };
     renderEstimate();
     const u = out.usage; $("#est-status").textContent = `${row.model} · ${fmt(u.promptTokenCount || 0)} in / ${fmt(u.candidatesTokenCount || 0)} out · free tier`;
+    retryPending({ force: true });                                   // Gemini answers again: settle anything parked
   } catch (e) {
-    $("#est-status").textContent = ""; $("#est-result").hidden = false;
-    $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't estimate.</b><small>${esc(e.message)}</small></div>`;
+    $("#est-go").disabled = false;
+    if (prior) { renderEstimate(); $("#est-status").textContent = "Refine failed — " + e.message; return; }   // the earlier estimate stands
+    if (e.config) {
+      $("#est-status").textContent = ""; $("#est-result").hidden = false;
+      $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't estimate.</b><small>${esc(e.message)}</small></div>`;
+      return;
+    }
+    await parkEstimate(text, e);
   } finally { $("#est-go").disabled = false; }
+}
+
+/* Gemini failed, so the meal goes into the log NOW as an unvalued row, with its text and photos kept.
+   retryPending() values it when Gemini answers again; tapping the row lets the person type it in. */
+async function parkEstimate(text, err) {
+  const shots = [];
+  for (const f of state.estFiles) { try { shots.push(await prepareImage(f)); } catch {} }
+  const images = [...shots.map(s => s.data), ...state.fixImages], thumb = shots[0]?.thumb || null;
+  let mealId = state.fixing, at;
+  if (mealId) {
+    const m = await db.get("meals", mealId); at = m?.at || atFor();
+    if (m) await db.put("meals", { ...m, needs_review: 1 });
+  } else {
+    at = atFor();
+    mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: 0, lo: 0, hi: 0, protein: 0, source: "pending", share: state.share, needs_review: 1, detail: { raw: text, thumb } });
+  }
+  await db.add("estimates", { day: at.slice(0, 10), at, text, share: state.share, status: "pending", images, thumb, meal_id: mealId, attempts: 1, last_error: err.message,
+    model: null, ident: null, result: null, usage: null, parent_id: null });
+  toast("Gemini didn't answer — it's in the log unvalued. The app keeps retrying; tap the row to type it in.", 5000);
+  resetEstimate(); closeSheets(); changed();
+}
+
+// values parked meals when Gemini is back: on open, on return to the app, every 2 min while open, after any success
+let retrying = false, lastRetry = 0;
+async function retryPending({ force = false } = {}) {
+  if (retrying || !state.settings.gemini_key) return;
+  if (!force && Date.now() - lastRetry < 90_000) return;
+  const parked = (await db.all("estimates")).filter(p => p.status === "pending").sort((a, b) => a.at.localeCompare(b.at));
+  if (!parked.length) return;
+  retrying = true; lastRetry = Date.now();
+  try {
+    for (const p of parked) {
+      const meal = await db.get("meals", p.meal_id);
+      if (!meal || !meal.needs_review) { await db.put("estimates", { ...p, status: meal ? "manual" : "dropped", images: [] }); continue; }   // typed in or removed meanwhile
+      try {
+        const out = await withModelFallback(() => runGemini({ apiKey: state.settings.gemini_key, model: modelToUse(), images: [], text: p.text, share: p.share, priorImages: p.images || [] }));
+        await rememberModel(out.model);
+        await db.put("estimates", { ...p, status: "done", images: [], model: out.model, ident: out.ident, result: out.result, usage: out.usage });
+        await valueRow(meal, out.result, p.id, meal.source === "pending" ? "photo" : undefined);
+        toast(`Valued: ${out.result.dish} — ${fmt(out.result.protein_g, 0)} g · ${fmt(out.result.kcal)} kcal`, 4000);
+        await changed();
+      } catch (e) {
+        await db.put("estimates", { ...p, attempts: (p.attempts || 0) + 1, last_error: e.message });
+        break;                                                        // still down: try again later, don't hammer
+      }
+    }
+  } finally { retrying = false; }
+}
+async function settlePending(mealId, status) {
+  for (const p of await db.all("estimates")) if (p.meal_id === mealId && p.status === "pending") await db.put("estimates", { ...p, status, images: [] });
 }
 $("#est-go").onclick = () => { if (!state.estFiles.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); };
 
@@ -273,27 +338,31 @@ function renderEstimate() {
   $("#est-discard").onclick = resetEstimate;
   $("#est-add").onclick = async () => {
     let id = null;
-    if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await valueRow(meal, r, e.id); id = meal.id; } }
+    if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await valueRow(meal, r, e.id, meal.source === "pending" ? "photo" : undefined); await settlePending(meal.id, "done"); id = meal.id; } }
     if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
     await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
     toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
   };
 }
 function resetEstimate() {
-  state.est = null; state.estFiles = []; state.fixing = null; state.label = null; state.share = 1;
+  state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.label = null; state.share = 1;
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
   $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = "";
   $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = "";
 }
-function startFix(meal) {
+async function startFix(meal) {
   resetEstimate(); state.fixing = meal.id; openSheet("meal");
-  $("#est-text").value = rawText(meal); $("#est-fixing").hidden = false;
+  const p = (await db.all("estimates")).find(x => x.meal_id === meal.id && x.status === "pending");   // a parked meal brings its photos back
+  state.fixImages = p?.images || []; state.share = p?.share ?? meal.share_frac ?? 1;
+  $("#est-share button").forEach(x => x.classList.toggle("on", parseFloat(x.dataset.v) === state.share));
+  if (p?.thumb) $("#est-thumbs").innerHTML = `<img src="data:image/jpeg;base64,${p.thumb}" alt="">`;
+  $("#est-text").value = p?.text ?? rawText(meal); $("#est-fixing").hidden = false;
   $("#est-fixing").textContent = `Valuing the row from ${meal.at.slice(11, 16)} — Add to log will replace it.`;
 }
-async function valueRow(meal, computed, estId) {
+async function valueRow(meal, computed, estId, source = "backfill-ai") {
   let d = meal.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = { raw: meal.label }; } }
   await db.put("meals", { ...meal, label: computed.dish, kcal: computed.kcal, kcal_lo: computed.kcal_lo, kcal_hi: computed.kcal_hi, protein_g: computed.protein_g,
-    source: "backfill-ai", needs_review: 0, detail: { ...(d || {}), estimate_id: estId, confidence: computed.confidence, model_share: computed.model_share } });
+    source, needs_review: 0, detail: { ...(d || {}), estimate_id: estId, confidence: computed.confidence, model_share: computed.model_share } });
 }
 $("#manual").onsubmit = async (e) => {
   e.preventDefault();
@@ -322,10 +391,11 @@ function openRow(r, kind) {
       const kcal = parseFloat($("#rw-kcal").value) || 0, ratio = r.kcal ? kcal / r.kcal : 1;
       await db.put("meals", { ...r, label: $("#rw-label").value.trim() || r.label, kcal, kcal_lo: Math.round(r.kcal ? r.kcal_lo * ratio : kcal * 0.85), kcal_hi: Math.round(r.kcal ? r.kcal_hi * ratio : kcal * 1.15),
         protein_g: parseFloat($("#rw-p").value) || 0, at: `${r.day}T${$("#rw-time").value || r.at.slice(11, 16)}+08:00`, needs_review: 0, source: r.needs_review ? "manual" : r.source });
+      if (r.needs_review) await settlePending(r.id, "manual");
       d.close(); toast("Saved"); changed();
     };
     $("#rw-again").onclick = async () => { await insertMeal({ label: r.label, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "repeat" }); d.close(); toast(`Added ${r.label}`); changed(); };
-    $("#rw-del").onclick = async () => { await db.del("meals", r.id); d.close(); toast("Removed"); changed(); };
+    $("#rw-del").onclick = async () => { await db.del("meals", r.id); await settlePending(r.id, "dropped"); d.close(); toast("Removed"); changed(); };
     if ($("#rw-ai")) $("#rw-ai").onclick = () => { d.close(); startFix(r); };
   } else {
     body.innerHTML = `<div class="rowsheet">
@@ -381,7 +451,8 @@ $("#prod-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#prod-status").textContent = "reading…";
   try {
-    const { data: L } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#prod-status").textContent = m }));
+    const { data: L, model: usedL } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: (m) => $("#prod-status").textContent = m }));
+    await rememberModel(usedL);
     const form = $("#product-form");
     form.kind.value = L.kind === "whey" ? "whey" : "milk"; syncPer();
     form.label.value = L.product;
@@ -434,7 +505,8 @@ $("#wo-shot").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   $("#wo-shot-status").textContent = "reading…";
   try {
-    const { data: W } = await withModelFallback(() => readWorkout({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, image: f, onStatus: (m) => $("#wo-shot-status").textContent = m }));
+    const { data: W, model: usedW } = await withModelFallback(() => readWorkout({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: (m) => $("#wo-shot-status").textContent = m }));
+    await rememberModel(usedW);
     if (W.duration_min) $("#wo-min").value = Math.round(W.duration_min);
     if (W.distance_km) $("#wo-km").value = W.distance_km;
     if (W.calories) $("#wo-kcal").value = Math.round(W.calories);
@@ -604,7 +676,8 @@ $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
   for (const m of rows) {
     dataMsg(`Valuing ${done + 1}/${rows.length}: ${rawText(m).slice(0, 50)}…`);
     try {
-      const out = await withModelFallback(() => runGemini({ apiKey: state.settings.gemini_key, model: state.settings.ai_model || DEFAULT_MODEL, images: [], text: rawText(m), share: 1, onStatus: dataMsg }));
+      const out = await withModelFallback(() => runGemini({ apiKey: state.settings.gemini_key, model: modelToUse(), images: [], text: rawText(m), share: 1, onStatus: dataMsg }));
+      await rememberModel(out.model);
       const estId = await db.add("estimates", { day: m.day, at: m.at, text: rawText(m), share: 1, model: out.model, ident: out.ident, result: out.result, thumb: null, usage: out.usage, parent_id: null, meal_id: m.id });
       await valueRow(m, out.result, estId); done++;
     } catch (err) { failed++; if (err.rateLimited) { dataMsg(`Stopped after ${done}: ${err.message}`); break; } else if (failed > 3) { dataMsg(`Stopped after ${done}: ${err.message}`); break; } }
@@ -641,6 +714,7 @@ $("#btn-settings").onclick = async () => {
 $("#settings-form").onsubmit = async (e) => {
   if (e.submitter?.value !== "save") return;
   const f = new FormData(e.target);
+  if (String(f.get("ai_model") ?? "").trim() !== (state.settings.ai_model || "")) await db.setSetting("ai_model_ok", "");
   for (const [k] of SETTINGS) await db.setSetting(k, String(f.get(k) ?? "").trim());
   toast("Saved"); await loadDay(); if (state.tab === "trend") await loadTrend();
 };
@@ -665,6 +739,7 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
       await db.setSetting("relabel_v1", "1"); if (n) { await loadDay(); await markDirty(); }
     }
     if (RETIRED_MODELS.includes(state.settings.ai_model)) { await db.setSetting("ai_model", DEFAULT_MODEL); state.settings.ai_model = DEFAULT_MODEL; }
+    retryPending({ force: true });
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo) {
       if ((await db.setting("dirty")) === "1") flushBackup();                      // a backup that never got out last time

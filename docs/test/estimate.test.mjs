@@ -68,3 +68,35 @@ test("readLabel reports the model that answered", async () => {
   const out = await readLabel({ apiKey: "k", image: {} });
   assert.equal(out.model, FALLBACK_MODELS[0]); assert.equal(out.data.kcal, 64);
 });
+
+const overloaded = () => ({ ok: false, status: 503, json: async () => ({ error: { code: 503, message: "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.", status: "UNAVAILABLE" } }) });
+
+test("503 on the chosen model goes straight to the next model — no waiting, no error", async () => {
+  const status = [];
+  const calls = mockFetch({ [DEFAULT_MODEL]: [overloaded], [FALLBACK_MODELS[0]]: [() => ok(IDENT)] });
+  const out = await estimate({ apiKey: "k", text: "chicken rice", onStatus: (s) => status.push(s) });
+  assert.deepEqual(calls, [DEFAULT_MODEL, FALLBACK_MODELS[0]]); assert.equal(out.model, FALLBACK_MODELS[0]);
+  assert.match(status[0], /overloaded \(503\) — trying the next model/);
+});
+
+test("every model overloaded: one transient error the app can park the meal on", async () => {
+  const script = {}; for (const m of [DEFAULT_MODEL, ...FALLBACK_MODELS]) script[m] = [overloaded];
+  const calls = mockFetch(script);
+  await assert.rejects(() => estimate({ apiKey: "k", text: "x" }), (e) => e.transient === true && !e.config && /overloaded or unreachable/.test(e.message));
+  assert.equal(calls.length, 1 + FALLBACK_MODELS.length);
+});
+
+test("no connection is transient too, and offline short-circuits before any call", async () => {
+  let calls = mockFetch({}); globalThis.fetch = async () => { calls.push("x"); throw new TypeError("Failed to fetch"); };
+  await assert.rejects(() => estimate({ apiKey: "k", text: "x" }), (e) => e.transient === true);
+  assert.equal(calls.length, 1 + FALLBACK_MODELS.length);
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: false }, configurable: true }); calls = [];
+  await assert.rejects(() => estimate({ apiKey: "k", text: "x" }), (e) => e.transient === true && /offline/.test(e.message));
+  assert.equal(calls.length, 0); delete globalThis.navigator;
+});
+
+test("a missing or rejected key is a config error, never parked or retried", async () => {
+  await assert.rejects(() => estimate({ apiKey: "", text: "x" }), (e) => e.config === true);
+  mockFetch({ [DEFAULT_MODEL]: [() => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }) })] });
+  await assert.rejects(() => estimate({ apiKey: "k", text: "x" }), (e) => e.config === true && !e.transient);
+});

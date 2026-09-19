@@ -7,7 +7,10 @@
    quantities; foods.computeFromIdentification does the sums.
 
    Free-tier quotas are per model per day (reset midnight Pacific) and per minute. callModel()
-   waits out a per-minute limit once, and moves to the next model when a day is used up. */
+   waits out a per-minute limit once, and moves to the next model when a day is used up or the
+   model is overloaded (503, seen for days at a time on older Flash models). Errors carry
+   .transient (worth retrying later — the app parks the meal and retries on its own) or
+   .config (key missing or rejected — only the person can fix that). */
 
 import { REFERENCE, computeFromIdentification } from "./foods.js";
 
@@ -88,23 +91,35 @@ export async function prepareImage(blob) {
 }
 
 // ------------------------------------------------------------ calls
+const CALL_TIMEOUT_MS = 60_000;
+const configError = (msg) => { const e = new Error(msg); e.config = true; return e; };
+
 async function generate(apiKey, model, body) {
-  const r = await fetch(`${API}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  let r;
+  try {
+    r = await fetch(`${API}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      signal: typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(CALL_TIMEOUT_MS) : undefined,
+    });
+  } catch (err) {                                                  // no answer at all: offline, DNS, timeout
+    const e = new Error(`${model}: ${err.name === "TimeoutError" ? "no answer in 60 s" : "no connection"}`);
+    e.transient = true; e.status = 0; throw e;
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const msg = j?.error?.message || r.statusText, details = j?.error?.details || [];
     let e;
-    if (r.status === 429) {
+    if (r.status >= 500) {                                         // "high demand", internal error, bad gateway
+      e = new Error(`${model}: overloaded (${r.status})`); e.transient = true;
+    } else if (r.status === 429) {
       // google.rpc.QuotaFailure names the bucket (…PerDay… / …PerMinute…); RetryInfo says how long to wait
       const q = details.find(d => /QuotaFailure/.test(d["@type"] || ""))?.violations?.[0] || {};
       const daily = /PerDay/i.test(q.quotaId || "");
       e = new Error(daily ? `${model}: free-tier day used up${q.quotaValue ? ` (${q.quotaValue} requests)` : ""}` : `${model}: free-tier busy`);
-      e.rateLimited = true; e.daily = daily;
+      e.rateLimited = true; e.transient = true; e.daily = daily;
       e.retryAfter = parseFloat(details.find(d => /RetryInfo/.test(d["@type"] || ""))?.retryDelay) || 0;
-    } else if (r.status === 400 && /API key/i.test(msg)) {
-      e = new Error("Gemini rejected the API key. Check it in ⚙ Settings.");
+    } else if ((r.status === 400 || r.status === 403) && /API key|permission/i.test(msg)) {
+      e = configError("Gemini rejected the API key. Check it in ⚙ Settings.");
     } else {
       e = new Error(`Gemini ${r.status}: ${msg}`);
       // "This model ... is no longer available ... use models/gemini-X" — carry the hint so the caller can switch
@@ -123,28 +138,30 @@ async function generate(apiKey, model, body) {
 }
 
 /** generate() with the free tier's failure modes handled: a per-minute 429 waits and retries once;
- *  a per-day 429 (or a second per-minute one) moves on to the next model, which has its own quota.
- *  onStatus(text) tells the UI what is happening during the wait. Returns the model that answered. */
+ *  a per-day 429, a 5xx or a second per-minute 429 moves on to the next model, which has its own
+ *  quota and capacity. onStatus(text) tells the UI what is happening. Returns the model that answered. */
 async function callModel(apiKey, model, body, onStatus = () => {}) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) { const e = new Error("You're offline"); e.transient = true; throw e; }
   const chain = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
-  let daily = false;
+  let daily = false, overloaded = false;
   for (const m of chain) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try { return { ...(await generate(apiKey, m, body)), model: m }; }
       catch (e) {
         if (e.status === 404 && m !== model) break;                       // a fallback Google no longer serves
-        if (!e.rateLimited) throw e;
-        daily ||= e.daily;
-        if (e.daily || attempt) { onStatus(`${e.message} — trying the next model`); break; }
+        if (!e.transient) throw e;
+        daily ||= !!e.daily; overloaded ||= !e.rateLimited;
+        if (!e.rateLimited || e.daily || attempt) { onStatus(`${e.message} — trying the next model`); break; }
         const s = Math.min(60, Math.max(5, Math.ceil(e.retryAfter || 20)));
         onStatus(`${m} is busy — retrying in ${s} s`); await timers.sleep(s * 1000);
       }
     }
   }
-  const e = new Error(daily
-    ? "Gemini's free tier is used up for today on every model it tries — it resets at midnight Pacific (3–4 pm Singapore). Type it in for now."
-    : "Gemini's free tier is busy on every model it tries — wait a minute and try again.");
-  e.rateLimited = true; throw e;
+  const e = new Error(overloaded && !daily
+    ? "Every Gemini model is overloaded or unreachable right now."
+    : daily ? "Gemini's free tier is used up for today on every model it tries — it resets at midnight Pacific (3–4 pm Singapore)."
+    : "Gemini's free tier is busy on every model it tries.");
+  e.transient = true; e.rateLimited = !overloaded || daily; throw e;
 }
 
 /**
@@ -154,7 +171,7 @@ async function callModel(apiKey, model, body, onStatus = () => {}) {
  * @returns {object} { result (computed), ident (raw), thumbs[], images[], usage, model (the one that answered) }
  */
 export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], onStatus }) {
-  if (!apiKey) throw new Error("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
+  if (!apiKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
   const prepared = [];
   for (const b of images) prepared.push(await prepareImage(b));
   const imageParts = prepared.map(p => ({ inline_data: { mime_type: "image/jpeg", data: p.data } }));
@@ -180,7 +197,7 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
   for (let attempt = 0; attempt < 2; attempt++) {
     ({ text: raw, usage, model: used } = await callModel(apiKey, model, body, onStatus));
     try { ident = JSON.parse(raw); break; }
-    catch { if (attempt) throw new Error("Gemini returned malformed JSON twice: " + raw.slice(0, 200)); }
+    catch { if (attempt) { const err = new Error("Gemini returned malformed JSON twice: " + raw.slice(0, 200)); err.transient = true; throw err; } }
   }
   const result = computeFromIdentification(ident, share);
   return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), usage, model: used };
@@ -189,7 +206,7 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
 
 // ------------------------------------------------------------ other readers
 async function extract(apiKey, model, blob, instruction, schema, onStatus) {
-  if (!apiKey) throw new Error("No Gemini API key. Add your free key in ⚙ Settings.");
+  if (!apiKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings.");
   const img = await prepareImage(blob);
   const { text, model: used } = await callModel(apiKey, model, {
     contents: [{ role: "user", parts: [{ inline_data: { mime_type: "image/jpeg", data: img.data } }, { text: instruction }] }],

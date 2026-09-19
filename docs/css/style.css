@@ -157,6 +157,7 @@ input[type=range]{width:100%;accent-color:var(--accent);height:34px;margin:0}
 .log .x{width:32px;height:32px;border-radius:6px;color:var(--faint);font-size:1.1rem;display:grid;place-items:center}
 .log .x:active{background:var(--crit-bg);color:var(--crit)}
 .log li.review .l::before{content:"? ";color:var(--warn);font-weight:700}
+.log li.pending .n{color:var(--warn)}
 .log li.workout .l{color:var(--accent-2);font-weight:600}
 .log .empty{color:var(--faint);font-size:.9rem;padding:10px 0;text-align:center}
 

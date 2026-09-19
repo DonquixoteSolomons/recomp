@@ -103,7 +103,7 @@ export async function dump() {
   const out = { version: 1, exported_at: new Date().toISOString() };
   for (const s of Object.keys(STORES)) {
     out[s] = await all(s);
-    if (s === "estimates") out[s] = out[s].map(({ thumb, ...rest }) => rest);   // thumbnails stay on the phone
+    if (s === "estimates") out[s] = out[s].map(({ thumb, images, ...rest }) => rest);   // thumbnails and parked photos stay on the phone
     if (s === "settings") out[s] = out[s].filter(r => !CREDENTIAL_KEYS.includes(r.key));
   }
   return out;
