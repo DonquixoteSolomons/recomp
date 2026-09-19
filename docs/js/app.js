@@ -30,12 +30,17 @@ function openSheet(name) {
   if (name === "meal") renderRecent();
   if (name === "shake") previewShake();
   if (name === "workout") renderWorkoutSheet();
-  if (name === "more") { $("#backup-state2").textContent = $("#backup-state").textContent; }
+  if (name === "more") $("#backup-state2").textContent = backupStateText();
 }
 const closeSheets = () => $$("dialog.sheet").forEach(d => d.open && d.close());
 $$("#actionbar button").forEach(b => b.onclick = () => openSheet(b.dataset.sheet));
 $$("dialog.sheet [data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
 $$("dialog.sheet").forEach(d => d.addEventListener("click", (e) => { if (e.target === d) d.close(); }));   // tap the backdrop
+// closing the meal sheet with nothing in progress forgets the share choice (photos and text stay for an accidental close)
+sheet("meal").addEventListener("close", () => {
+  if (state.fixing) resetEstimate();                                                                       // a hand-valuing abandoned: the row goes back to the retry queue
+  else if (!state.est) { state.share = 1; $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1")); }
+});
 
 // ------------------------------------------------------------ backup: dirty flag, flush on hide and on next open
 let backupT = null;
@@ -52,7 +57,18 @@ async function flushBackup() {
     $("#backup-state").textContent = "backed up " + new Date().toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit" }); await syncOk();
   } catch (e) { $("#backup-state").textContent = "backup failed: " + e.message; await syncFailed("Backup", e); }
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(backupT); flushBackup(); } else retryPending(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(backupT); flushBackup(); } else { retryPending(); maybePullBody(); } });
+// the Renpho job runs every 3 h; a morning weigh-in should show up on the next open after it lands, not tomorrow
+let pulling = false;
+async function maybePullBody() {
+  const s = state.settings; if (pulling || !s.gh_token || !s.gh_repo) return;
+  if (s.last_pull_at && Date.now() - new Date(s.last_pull_at).getTime() < 60 * 60_000) return;
+  pulling = true;
+  try {
+    const r = await sync.pullBody();
+    if (r.ok) { await db.setSetting("last_pull_at", new Date().toISOString()); state.settings.last_pull_at = new Date().toISOString(); await syncOk(); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } }
+  } catch (e) { await syncFailed("Weigh-in pull", e); } finally { pulling = false; }
+}
 setInterval(() => document.visibilityState === "visible" && retryPending(), 120_000);
 window.addEventListener("online", () => retryPending({ force: true }));
 async function changed() { await loadDay(); await markDirty(); }
@@ -60,6 +76,8 @@ async function changed() { await loadDay(); await markDirty(); }
 async function syncFailed(what, e) { await db.setSetting("gh_error", `${what} failed — ${e.message}${e.auth ? ". Fix the token or repo in ⚙ Settings." : ""}`); showSyncWarn(); }
 async function syncOk() { if (await db.setting("gh_error")) { await db.setSetting("gh_error", ""); showSyncWarn(); } }
 async function showSyncWarn() { const msg = await db.setting("gh_error", ""); const el = $("#sync-warn"); el.hidden = !msg; el.textContent = msg ? "⚠ " + msg : ""; }
+
+const backupStateText = () => state.settings.last_backup ? "last backup " + new Date(state.settings.last_backup).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : (state.settings.gh_token ? "never backed up" : "no GitHub token — not backing up");
 
 // ------------------------------------------------------------ day model
 async function loadDay(day = state.day) {
@@ -86,9 +104,9 @@ async function loadDay(day = state.day) {
 
 const labelKind = (k) => ({ revl_move: "REVL Move", revl_sweat: "REVL Sweat", revl_perform: "REVL Perform",
   run_vest: "Vest run", calves: "Calves", run: "Run", lift: "Strength", swim: "Swim", other: "Workout" }[k] || k);
-const workoutLine = (w) => {
+const workoutLine = (w, { kcal = true } = {}) => {
   if (w.sets?.length) { const by = {}; for (const s of w.sets) (by[s.exercise] ||= []).push(`${s.weight}×${s.reps}`); return Object.entries(by).map(([e, ss]) => `${e} ${ss.join(", ")}`).join(" · "); }
-  return [w.duration_min ? `${w.duration_min} min` : null, w.distance_km ? `${w.distance_km} km` : null, w.kcal ? `${w.kcal} kcal` : null, w.detail].filter(Boolean).join(" · ");
+  return [w.duration_min ? `${w.duration_min} min` : null, w.distance_km ? `${w.distance_km} km` : null, kcal && w.kcal ? `${w.kcal} kcal` : null, w.detail].filter(Boolean).join(" · ");
 };
 
 function render() {
@@ -136,7 +154,7 @@ function render() {
       li.onclick = () => openRow(r, "meal");
     } else {
       li.className = "workout";
-      li.innerHTML = `<span class="t">${time}</span><span class="l">${labelKind(r.kind)}<small>${esc(workoutLine(r))}</small></span><span class="n"></span><span class="n">${r.kcal ? fmt(r.kcal) + " kcal" : ""}</span><span></span>`;
+      li.innerHTML = `<span class="t">${time}</span><span class="l">${labelKind(r.kind)}<small>${esc(workoutLine(r, { kcal: false }))}</small></span><span class="n"></span><span class="n">${r.kcal ? fmt(r.kcal) + " kcal" : ""}</span><span></span>`;
       li.onclick = () => openRow(r, "workout");
     }
     log.appendChild(li);
@@ -156,10 +174,11 @@ function render() {
 }
 
 // ------------------------------------------------------------ meals
-async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, venue = null, detail = null, needs_review = 0, hm = null }) {
+/** share scales the numbers; share_frac is what the row shows (defaults to share; pass it when the numbers are already scaled). */
+async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, share_frac = share, venue = null, detail = null, needs_review = 0, hm = null }) {
   const at = atFor(hm);
   return db.add("meals", { day: at.slice(0, 10), at, label, kcal: Math.round(kcal * share), kcal_lo: Math.round(lo * share), kcal_hi: Math.round(hi * share),
-    protein_g: Math.round(protein * share * 10) / 10, source, share_frac: share, venue, detail, needs_review });
+    protein_g: Math.round(protein * share * 10) / 10, source, share_frac, venue, detail, needs_review });
 }
 
 // recents: what you actually repeat
@@ -251,10 +270,10 @@ async function runEstimate(correction = null) {
     const row = { day: at.slice(0, 10), at, text, share: state.share, model: out.model, ident: out.ident, result: out.result,
       thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
     row.id = await db.add("estimates", row);
-    state.est = { ...row, images: out.images.length ? out.images : (prior?.images || []) };
+    state.est = { ...row, images: out.images.length ? out.images : (prior ? prior.images : state.fixImages) };
     renderEstimate();
     const u = out.usage; $("#est-status").textContent = `${row.model} · ${fmt(u.promptTokenCount || 0)} in / ${fmt(u.candidatesTokenCount || 0)} out · free tier`;
-    retryPending({ force: true });                                   // Gemini answers again: settle anything parked
+    if (!state.fixing) retryPending({ force: true });                // Gemini answers again: settle anything parked
   } catch (e) {
     $("#est-go").disabled = false;
     if (prior) { renderEstimate(); $("#est-status").textContent = "Refine failed — " + e.message; return; }   // the earlier estimate stands
@@ -313,10 +332,10 @@ async function retryPending({ force = false } = {}) {
     }
   } finally { retrying = false; }
 }
-async function settlePending(mealId, status) {
-  for (const p of await db.all("estimates")) if (p.meal_id === mealId && p.status === "pending") await db.put("estimates", { ...p, status, images: [] });
+async function settlePending(mealId, status, from = null) {
+  for (const p of await db.all("estimates")) if (p.meal_id === mealId && (from ? p.status === from : (p.status === "pending" || p.status === "fixing"))) await db.put("estimates", { ...p, status, images: status === "pending" ? p.images : [] });
 }
-$("#est-go").onclick = () => { if (!state.estFiles.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); };
+$("#est-go").onclick = () => { if (!state.estFiles.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); };
 
 function renderEstimate() {
   const e = state.est, r = e.result, box = $("#est-result"); box.hidden = false;
@@ -338,23 +357,26 @@ function renderEstimate() {
   $("#est-discard").onclick = resetEstimate;
   $("#est-add").onclick = async () => {
     let id = null;
-    if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await valueRow(meal, r, e.id, meal.source === "pending" ? "photo" : undefined); await settlePending(meal.id, "done"); id = meal.id; } }
-    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
+    if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await settlePending(meal.id, "done"); await valueRow(meal, r, e.id, /^(pending|photo)$/.test(meal.source) ? "photo" : "backfill-ai"); id = meal.id; } }
+    if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
     await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
     toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
   };
 }
 function resetEstimate() {
+  if (state.fixing) settlePending(state.fixing, "pending", "fixing");                                   // sheet gave up on it: back to the retry queue (no-op once settled)
   state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.label = null; state.share = 1;
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
+  $$("#est-thumbs img").forEach(i => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
   $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = "";
   $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = "";
 }
 async function startFix(meal) {
   resetEstimate(); state.fixing = meal.id; openSheet("meal");
-  const p = (await db.all("estimates")).find(x => x.meal_id === meal.id && x.status === "pending");   // a parked meal brings its photos back
+  const p = (await db.all("estimates")).find(x => x.meal_id === meal.id && (x.status === "pending" || x.status === "fixing"));   // a parked meal brings its photos back
+  if (p) await db.put("estimates", { ...p, status: "fixing" });                                        // not the background retry's job while the sheet has it
   state.fixImages = p?.images || []; state.share = p?.share ?? meal.share_frac ?? 1;
-  $("#est-share button").forEach(x => x.classList.toggle("on", parseFloat(x.dataset.v) === state.share));
+  $$("#est-share button").forEach(x => x.classList.toggle("on", parseFloat(x.dataset.v) === state.share));
   if (p?.thumb) $("#est-thumbs").innerHTML = `<img src="data:image/jpeg;base64,${p.thumb}" alt="">`;
   $("#est-text").value = p?.text ?? rawText(meal); $("#est-fixing").hidden = false;
   $("#est-fixing").textContent = `Valuing the row from ${meal.at.slice(11, 16)} — Add to log will replace it.`;
@@ -367,8 +389,8 @@ async function valueRow(meal, computed, estId, source = "backfill-ai") {
 $("#manual").onsubmit = async (e) => {
   e.preventDefault();
   const f = new FormData(e.target), kcal = +f.get("kcal");
-  await insertMeal({ label: String(f.get("label")).trim(), kcal, lo: kcal * 0.85, hi: kcal * 1.15, protein: +f.get("protein_g"), source: "manual", share: state.share });
-  e.target.reset(); toast("Added"); closeSheets(); changed();
+  await insertMeal({ label: String(f.get("label")).trim(), kcal, lo: kcal * 0.85, hi: kcal * 1.15, protein: +f.get("protein_g"), source: "manual" });
+  e.target.reset(); toast("Added"); resetEstimate(); closeSheets(); changed();
 };
 
 // ------------------------------------------------------------ row sheet: edit / log again / delete
@@ -536,8 +558,10 @@ $("#wo-log").onclick = async () => {
 // ------------------------------------------------------------ weigh-in by hand
 $("#bw-log").onclick = async () => {
   const w = parseFloat($("#bw-kg").value); if (!w) return toast("Weight?");
-  const bf = parseFloat($("#bw-bf").value), at = atFor("07:00");
-  await db.add("body", { day: at.slice(0, 10), at, weight_kg: w, bodyfat_pct: Number.isFinite(bf) ? bf : null, muscle_kg: null, water_pct: null, source: "manual", ext_id: `manual:${at}` });
+  const bf = parseFloat($("#bw-bf").value), at = atFor(state.day === todayStr() ? nowHM() : "07:00");
+  try {
+    await db.add("body", { day: at.slice(0, 10), at, weight_kg: w, bodyfat_pct: Number.isFinite(bf) ? bf : null, muscle_kg: null, water_pct: null, source: "manual", ext_id: `manual:${at}:${Date.now()}` });
+  } catch (e) { return toast("Couldn't save the weigh-in: " + (e?.message || e?.name || "unknown error"), 4000); }
   $("#bw-kg").value = ""; $("#bw-bf").value = ""; toast("Weight logged"); closeSheets(); changed();
 };
 $("#btn-backup2").onclick = (e) => { closeSheets(); $("#btn-backup").click(); };
@@ -558,7 +582,7 @@ async function loadTrend() {
   const last = state.trend.points.at(-1);
   $("#trend-latest").textContent = last ? fmt(last.weight, 2) + " kg" : "no weigh-ins yet";
   $("#btn-fixall").hidden = !state.all.meals.some(m => m.needs_review || looksPartial(m));
-  $("#backup-state").textContent = s.last_backup ? "last backup " + new Date(s.last_backup).toLocaleString("en-SG", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "never backed up";
+  $("#backup-state").textContent = backupStateText();
   // how current the scale data is — answers "why isn't today's weigh-in here"
   const lastBody = state.all.body.slice().sort((x, y) => x.at.localeCompare(y.at)).at(-1);
   const el = $("#body-fresh");
@@ -744,7 +768,7 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
     if (s.gh_token && s.gh_repo) {
       if ((await db.setting("dirty")) === "1") flushBackup();                      // a backup that never got out last time
       sync.applyChatFixes().then(async r => { if (r.ok && !r.skipped) { toast(`Chat: ${r.valued} valued, ${r.added || 0} added`); await loadDay(); await markDirty(); } }).catch(() => {});
-      if (s.last_pull !== today) sync.pullBody().then(async r => { if (r.ok) { await db.setSetting("last_pull", today); await syncOk(); if (r.added) { toast(`${r.added} new weigh-in${r.added > 1 ? "s" : ""}`); await loadDay(); } } }).catch(e => syncFailed("Weigh-in pull", e));
+      maybePullBody();
     }
   } catch (e) { toast("Startup failed: " + e.message, 6000); console.error(e); }
 })();
