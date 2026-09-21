@@ -251,7 +251,13 @@ test("provisional targets from a few facts, rounded to something a person can ho
   const t = provisionalTargets({ sex: "male", age: 26, height_cm: 169, weight_kg: 75, activity: "desk", goal: "recomp" });
   assert.equal(t.bmr, 1681);                                   // 750 + 1056.25 - 130 + 5
   assert.equal(t.provisional_kcal, 1750);                      // 1681 * 1.2 - 250 = 1767 -> 1750
-  assert.deepEqual([t.protein_floor_g, t.protein_ceiling_g], [150, 165]);   // 2.0-2.2 g/kg for recomp
+  assert.deepEqual([t.protein_floor_g, t.protein_ceiling_g], [150, 180]);   // 2.0-2.4 g/kg body mass for recomp, body fat unknown
+  // with body fat known (scale: 25.9%): Cunningham on 55.5 kg fat-free mass, protein per kg of it
+  const b = provisionalTargets({ sex: "male", age: 26, height_cm: 169, weight_kg: 74.9, bodyfat_pct: 25.9, activity: "desk", goal: "recomp" });
+  assert.deepEqual([b.method, b.ffm, b.bmr], ["cunningham", 55.5, 1721]);
+  assert.equal(b.provisional_kcal, 1800);                                    // 1721 * 1.2 - 250 = 1815 -> 1800 rest-day base; classes add on top
+  assert.deepEqual([b.protein_floor_g, b.protein_ceiling_g], [155, 185]);   // 2.8-3.3 g/kg FFM
+  assert.equal(provisionalTargets({ weight_kg: 74.9, bodyfat_pct: 0, height_cm: 169, age: 26 }).method, "mifflin");   // a nonsense reading is ignored
   assert.deepEqual([t.weight_lo_kg, t.weight_hi_kg], [73, 77]);
   const f = provisionalTargets({ sex: "female", age: 40, height_cm: 160, weight_kg: 60, activity: "feet", goal: "gain" });
   assert.equal(f.bmr, 1239); assert.equal(f.provisional_kcal, 2100); assert.deepEqual([f.protein_floor_g, f.protein_ceiling_g], [95, 120]);

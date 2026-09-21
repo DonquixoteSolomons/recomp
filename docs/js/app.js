@@ -984,7 +984,7 @@ const optPick = (sel) => { $$(sel + " .opt").forEach(b => b.onclick = () => { $$
 optPick("#setup-activity"); optPick("#setup-goal");
 const setupVals = () => {
   const f = $("#setup-form"), lb = f.units.value === "lb", w = parseFloat(f.weight.value);
-  return { sex: f.sex.value, age: parseInt(f.age.value, 10), height_cm: parseFloat(f.height_cm.value), weight_kg: lb ? w / 2.20462 : w, units: f.units.value,
+  return { sex: f.sex.value, age: parseInt(f.age.value, 10), height_cm: parseFloat(f.height_cm.value), weight_kg: lb ? w / 2.20462 : w, units: f.units.value, bodyfat_pct: parseFloat(f.bodyfat.value) || null,
     activity: $("#setup-activity .opt.on")?.dataset.v || "desk", goal: $("#setup-goal .opt.on")?.dataset.v || "recomp", gemini_key: f.gemini_key.value.trim() };
 };
 // targets already on this phone (from a previous setup, the seed, or typed in Settings) are the person's; setup proposes, it does not overwrite
@@ -999,7 +999,7 @@ function setupPreview() {
     $("#setup-preview").textContent = `Your targets now: protein ${fmt(cur.floor)}–${fmt(cur.ceil)} g, ${fmt(cur.base)} kcal rest-day base. Suggested from these facts: protein ${t.protein_floor_g}–${t.protein_ceiling_g} g, ${fmt(t.provisional_kcal)} kcal. Either is a starting guess — the app replaces the calorie base with your measured expenditure once it has a week of data. Keep yours, or use the suggestion.`;
     keep.hidden = false; go.textContent = "Use suggested";
   } else {
-    $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g. The app replaces this with your measured expenditure once it has a week of data.`;
+    $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g${t.ffm ? ` (${t.ffm} kg fat-free mass)` : ""}. The app replaces this with your measured expenditure once it has a week of data.`;
     keep.hidden = true; go.textContent = "Start";
   }
 }
@@ -1007,7 +1007,7 @@ function setupPreview() {
 function openSetup() {
   const f = $("#setup-form"), s = state.settings;
   f.units.value = unit(); f.sex.value = s.sex || "male"; f.age.value = s.age || ""; f.height_cm.value = s.height_cm || "";
-  f.weight.value = state.data?.body ? fmt(toUnit(state.data.body.weight), 1) : ""; f.gemini_key.value = s.gemini_key || "";
+  f.weight.value = state.data?.body ? fmt(toUnit(state.data.body.weight), 1) : ""; f.bodyfat.value = state.data?.body?.bodyfat ?? s.bodyfat_pct ?? ""; f.gemini_key.value = s.gemini_key || "";
   $$("#setup-activity .opt").forEach(b => b.classList.toggle("on", b.dataset.v === (s.activity || "desk")));
   $$("#setup-goal .opt").forEach(b => b.classList.toggle("on", b.dataset.v === (s.goal || "recomp")));
   setupPreview(); $("#setup").showModal();
@@ -1016,7 +1016,7 @@ $("#setup-skip").onclick = async () => { await db.setSetting("setup_done", "1");
 async function finishSetup({ useSuggested }) {
   const v = setupVals(); if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) return toast("Age, height and weight, please");
   const t = eng.provisionalTargets(v);
-  const put = { units: v.units, sex: v.sex, age: v.age, height_cm: v.height_cm, activity: v.activity, goal: v.goal, setup_done: "1" };
+  const put = { units: v.units, sex: v.sex, age: v.age, height_cm: v.height_cm, activity: v.activity, goal: v.goal, setup_done: "1", bodyfat_pct: v.bodyfat_pct ?? "" };
   if (useSuggested) Object.assign(put, { provisional_kcal: t.provisional_kcal, recomp_deficit_kcal: t.recomp_deficit_kcal, protein_floor_g: t.protein_floor_g, protein_ceiling_g: t.protein_ceiling_g,
     weight_lo_kg: t.weight_lo_kg ?? "", weight_hi_kg: t.weight_hi_kg ?? "" });
   for (const [k, val] of Object.entries(put)) await db.setSetting(k, val);

@@ -53,9 +53,13 @@ Unstar, *6 calorie tracking apps ranked by 1-star reviews* (2026); Nutrola,
 reviews (Jul–Sep 2026); Bento Bunny on the 2026 MFP redesign; PissedConsumer.
 
 Set-up asks for a minute of facts (units, sex, age, height, weight, activity,
-goal) and derives the first week's targets (protein 2.0–2.2 g/kg for recomp or
-a cut, 1.6–2.0 otherwise; a rest-day base from Mifflin-St Jeor, never below
-resting needs). Targets already on the phone are the person's: redoing setup
+goal, and body fat if you have a number) and derives the first week's targets.
+With body fat known: Cunningham resting rate on fat-free mass, protein
+2.8–3.3 g per kg of fat-free mass for recomp or a cut (Helms 2014; the recomp
+trials sit near 2.4–2.5 g/kg body mass). Without: Mifflin-St Jeor and 2.0–2.4
+g/kg body mass. Maintain or gain: 1.6–2.0 g/kg. Recomp is 250 kcal under
+maintenance on a rest day, sessions on top; the base is never below resting
+needs. Targets already on the phone are the person's: redoing setup
 shows both and asks — Keep my targets, or Use suggested. Workout kinds are your own
 (Settings), weight shows in kg or lb, and the log never depends on the AI
 being up — a meal that can't be valued is parked in the log and valued later
