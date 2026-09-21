@@ -992,13 +992,14 @@ const currentTargets = () => { const s = state.settings, n = (k) => parseFloat(s
 function setupPreview() {
   const v = setupVals(); $("#setup-unit").textContent = v.units;
   const cur = currentTargets(), keep = $("#setup-keep"), go = $("#setup-go");
-  if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) { $("#setup-preview").textContent = ""; keep.hidden = true; go.textContent = "Start"; return; }
+  if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) { $("#setup-preview").textContent = ""; keep.hidden = true; $("#setup-skip").hidden = false; go.textContent = "Start"; return; }
   const t = eng.provisionalTargets(v);
   const same = cur && cur.floor === t.protein_floor_g && cur.ceil === t.protein_ceiling_g && cur.base === t.provisional_kcal;
   if (cur && !same) {
     $("#setup-preview").textContent = `Your targets now: protein ${fmt(cur.floor)}–${fmt(cur.ceil)} g, ${fmt(cur.base)} kcal rest-day base. Suggested from these facts: protein ${t.protein_floor_g}–${t.protein_ceiling_g} g, ${fmt(t.provisional_kcal)} kcal. Either is a starting guess — the app replaces the calorie base with your measured expenditure once it has a week of data. Keep yours, or use the suggestion.`;
-    keep.hidden = false; go.textContent = "Use suggested";
+    keep.hidden = false; go.textContent = "Use suggested"; $("#setup-skip").hidden = true;      // Later is for a first run; two buttons fit a phone
   } else {
+    $("#setup-skip").hidden = false;
     $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g${t.ffm ? ` (${t.ffm} kg fat-free mass)` : ""}. The app replaces this with your measured expenditure once it has a week of data.`;
     keep.hidden = true; go.textContent = "Start";
   }

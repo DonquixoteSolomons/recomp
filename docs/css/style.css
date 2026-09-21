@@ -234,6 +234,9 @@ textarea.text{resize:vertical;min-height:92px;line-height:1.4}
 .opt{min-height:50px;border:2px solid var(--line);border-bottom-width:4px;border-radius:var(--r-s);font-size:15px;font-weight:800;color:var(--ink);background:var(--card);padding:0 10px}
 .opt:active{transform:translateY(2px);border-bottom-width:2px}
 .opt.on{background:var(--purple-bg);border-color:var(--purple);color:var(--purple-ink)}
+.opt small{display:block;font-size:11px;font-weight:700;color:var(--muted);line-height:1.25;margin-top:2px;text-transform:none;letter-spacing:0}
+.opt:has(small){padding:8px 10px;min-height:58px}
+#setup-activity .opt:first-child{grid-column:1 / -1}
 
 /* regulars */
 .chips{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -257,7 +260,8 @@ dialog.sheet{
   background:var(--card); color:var(--ink); border-radius:24px 24px 0 0;
   box-shadow:0 -10px 40px rgba(0,0,0,.3);
 }
-dialog.sheet[open]{display:grid;grid-template-rows:auto 1fr auto;animation:up .28s cubic-bezier(.2,.8,.2,1)}
+dialog.sheet[open]{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:minmax(0,1fr);animation:up .28s cubic-bezier(.2,.8,.2,1)}   /* minmax(0,1fr): a wide footer must never widen the sheet past the screen */
+.sheet-head,.sheet-body,.sheet-foot{min-width:0}
 dialog.sheet form{display:contents}
 @keyframes up{from{transform:translateY(48px);opacity:0}to{transform:none;opacity:1}}
 dialog::backdrop{background:rgba(0,0,0,.5)}
@@ -268,7 +272,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 .sheet-head .close:focus-visible{outline:0}
 .sheet-body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;overscroll-behavior:contain;min-height:0}
 .sheet-foot{padding:10px 16px calc(12px + env(safe-area-inset-bottom));border-top:2px solid var(--line);background:var(--card);display:flex;gap:10px}
-.sheet-foot .btn{flex:1}
+.sheet-foot .btn{flex:1;min-width:0;padding:0 10px;letter-spacing:.04em}
 dialog.modal{border:0;border-radius:var(--r);background:var(--card);color:var(--ink);padding:18px;width:min(92vw,480px)}
 dialog.modal h2{margin-bottom:4px}
 
