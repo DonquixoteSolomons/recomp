@@ -107,7 +107,7 @@ async function loadDay(day = state.day) {
   const trend = eng.weightTrend(allBody.filter(b => b.day >= eng.addDays(todayStr(), -120)), s), latest = trend.at(-1) || null;
   const wl = parseFloat(s.weight_lo_kg), wh = parseFloat(s.weight_hi_kg), bounded = Number.isFinite(wl) && Number.isFinite(wh);
   const week = eng.weekSummary(allMeals, allWorkouts, allBody, s, todayStr());
-  const streak = eng.streak(allMeals, todayStr());
+  const streak = eng.streak(allMeals, todayStr(), eng.incompleteKcal(s));
   state.all = { meals: allMeals, workouts: allWorkouts, body: allBody };
   state.data = { day, is_today: day === todayStr(), meals, workouts, totals, target, verdict: v, exp, week, streak,
     weighed_today: allBody.some(b => b.day === day),
@@ -140,7 +140,7 @@ function render() {
 
   // top strip: streak (lit once today counts) and the latest weigh-in
   const st = $("#streak"); st.querySelector("b").textContent = d.streak.days; st.classList.toggle("on", d.streak.today && d.streak.days > 0);
-  st.title = d.streak.today ? `${d.streak.days}-day streak` : "Log today to keep the streak";
+  st.title = (d.streak.today ? `${d.streak.days} day${d.streak.days === 1 ? "" : "s"} logged in a row` : "Log today to keep it going") + " · one missed day a week doesn't break it";
   const chip = $("#weight-chip");
   if (d.body) {
     chip.hidden = false; chip.classList.toggle("oob", !!d.body.out_of_bounds);
@@ -165,11 +165,12 @@ function render() {
   const sessionNote = k.sessions ? `rest base ${fmt(k.base)} + sessions ${fmt(k.sessions)}` : `rest day · base ${fmt(k.base)}`;
   $("#k-foot").textContent = `${sessionNote} · ${k.source === "measured" ? `measured, ${k.confidence} confidence` : "provisional until the engine has data"}` + (t.kcal ? ` · range ${fmt(t.lo)}–${fmt(t.hi)}` : "");
 
-  const vd = $("#verdict"), tone = v.kcal === "over" ? "crit" : v.protein === "short" ? "warn" : "ok";
-  const head = !d.meals.length ? "Nothing logged yet." : v.ok_to_end ? "Day complete." : v.protein === "short" ? "Protein first." : "Over the calorie band.";
+  const vd = $("#verdict"), tone = v.kcal === "over" || v.protein === "short" ? "warn" : "ok";
+  const head = !d.meals.length ? "Nothing logged yet." : v.ok_to_end ? "Day complete." : v.protein === "short" ? "Protein first." : "Over the band today.";
+  const weekNote = v.kcal === "over" && d.week.kcal_avg != null ? ` · the week is what counts: ${fmt(d.week.kcal_avg)} kcal/day so far` : "";
   vd.className = "verdict " + (d.meals.length ? tone : "") + (tone === "ok" && lastVerdictOk === false && d.is_today ? " pop" : "");
   lastVerdictOk = d.is_today ? tone === "ok" : lastVerdictOk;
-  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pending ? `${pending} meal${pending > 1 ? "s" : ""} waiting for AI — totals are short · ` : ""}${v.protein_msg} · ${v.kcal_msg}</small></div>`;
+  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pending ? `${pending} meal${pending > 1 ? "s" : ""} waiting for AI — totals are short · ` : ""}${v.protein_msg} · ${v.kcal_msg}${weekNote}</small></div>`;
 
   // daily goals, Duolingo-quest style
   const goals = [
@@ -235,6 +236,25 @@ function renderRecent() {
     box.appendChild(w);
   }
 }
+
+// your own past entries as you type — MFP's "doesn't retain foods you've entered" complaint; regulars stay 3+, this is the search
+function renderRecall() {
+  const q = normFoodLabel($("#est-text").value); const box = $("#recall"); box.innerHTML = "";
+  if (q.length < 2 || state.fixing) return;
+  const seen = new Set(), hits = [];
+  for (const m of [...(state.all?.meals || [])].sort((a, b) => b.at.localeCompare(a.at))) {
+    if (m.source === "shake" || m.source === "pending" || !m.kcal) continue;
+    const k = normFoodLabel(m.label); if (!k.includes(q) || seen.has(k)) continue;
+    seen.add(k); hits.push(m); if (hits.length === 4) break;
+  }
+  for (const m of hits) {
+    const b = document.createElement("button"); b.className = "chip recall";
+    b.innerHTML = `${esc(m.label)}<small>${fmt(m.protein_g, 0)} g · ${fmt(m.kcal)} kcal · ${m.day.slice(5).replace("-", "/")}</small>`;
+    b.onclick = async () => { b.disabled = true; await insertMeal({ label: m.label, kcal: m.kcal, lo: m.kcal_lo, hi: m.kcal_hi, protein: m.protein_g, source: "repeat" }); toast(`Added ${m.label}`); resetEstimate(); closeSheets(); changed(); };
+    box.appendChild(b);
+  }
+}
+$("#est-text").addEventListener("input", renderRecall);
 
 // share segmented
 $$("#est-share button").forEach(b => b.onclick = () => { $$("#est-share button").forEach(x => x.classList.toggle("on", x === b)); state.share = parseFloat(b.dataset.v); });
@@ -435,7 +455,7 @@ function resetEstimate() {
   state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.label = null; state.share = 1;
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
   $$("#est-thumbs img").forEach(i => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
-  $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = "";
+  $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = ""; $("#recall").innerHTML = "";
   $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = ""; state.labelAdd = null; setMealFoot("estimate");
 }
 async function startFix(meal) {
@@ -839,6 +859,12 @@ $("#btn-addkind").onclick = () => {
   $("#kinds-editor").insertBefore(row, $("#kinds-editor .kind-row[data-key=lift]"));
 };
 $("#btn-setup").onclick = () => { $("#settings").close(); openSetup(); };
+$("#btn-wipe").onclick = async () => {
+  if (!confirm("Delete every meal, workout, weigh-in, estimate and setting on this phone? Your GitHub backup, if any, is not touched.")) return;
+  if (!confirm("Last check — this cannot be undone here. Delete everything?")) return;
+  for (const store of ["meals", "workouts", "body", "estimates", "products", "settings"]) await db.clear(store);
+  location.reload();
+};
 $("#btn-settings").onclick = async () => {
   const s = await db.allSettings();
   $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || k === "ai_model" ? "wide" : ""}">${l.replace("(kg)", `(${unit()})`)}<input class="num" type="${type}" name="${k}" value="${esc(k.startsWith("weight_") && s[k] ? fmt(toUnit(parseFloat(s[k])), 1) : (s[k] ?? ""))}" autocomplete="off"></label>`).join("");

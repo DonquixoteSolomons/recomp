@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays, streak, provisionalTargets } from "../js/engine.js";
+import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays, streak, provisionalTargets, incompleteKcal } from "../js/engine.js";
 import { shake, computeFromIdentification, REFERENCE, QUICK, DEFAULT_PRODUCTS } from "../js/foods.js";
 
 const S = { creatine_start: "2000-01-01", creatine_settle_days: "28", recomp_deficit_kcal: "250",
@@ -228,13 +228,23 @@ test("two weigh-ins on one morning: the later one is the day's reading, as in th
   assert.equal(p.weight, 74.85); assert.equal(p.bodyfat, 25.9);
 });
 
-test("streak: consecutive complete days, today counted only once it is complete", () => {
+test("streak: logged days in a row, today counted once complete, one miss a week forgiven", () => {
   const day = (d, kcal) => ({ day: d, at: d + "T12:00:00+08:00", kcal, kcal_lo: kcal, kcal_hi: kcal, protein_g: 50 });
   const meals = [day("2026-09-15", 1800), day("2026-09-16", 2100), day("2026-09-17", 1900), day("2026-09-18", 2000), day("2026-09-19", 400)];
-  assert.deepEqual(streak(meals, "2026-09-19"), { days: 4, today: false });          // today has only breakfast so far: yesterday's 4 stand
-  assert.deepEqual(streak([...meals, day("2026-09-19", 900)], "2026-09-19"), { days: 5, today: true });
-  assert.deepEqual(streak(meals.filter(m => m.day !== "2026-09-17"), "2026-09-19"), { days: 1, today: false });   // a missed day resets
-  assert.deepEqual(streak([], "2026-09-19"), { days: 0, today: false });
+  assert.deepEqual(streak(meals, "2026-09-19"), { days: 4, today: false, graceUsed: 0 });     // today has only breakfast so far: yesterday's 4 stand
+  assert.deepEqual(streak([...meals, day("2026-09-19", 900)], "2026-09-19"), { days: 5, today: true, graceUsed: 0 });
+  const oneMiss = streak(meals.filter(m => m.day !== "2026-09-17"), "2026-09-19");
+  assert.deepEqual([oneMiss.days, oneMiss.graceUsed], [3, 1]);                                 // a rest day does not wipe the run
+  const twoMisses = streak(meals.filter(m => m.day !== "2026-09-17" && m.day !== "2026-09-16"), "2026-09-19");
+  assert.equal(twoMisses.days, 1);                                                             // two in the same week do
+  assert.deepEqual(streak([], "2026-09-19"), { days: 0, today: false, graceUsed: 0 });
+  assert.equal(streak([day("2026-09-10", 1500)], "2026-09-19").days, 0);                       // the run has to reach today or yesterday
+});
+
+test("the complete-day bar scales with the person's target, capped at 1000", () => {
+  assert.equal(incompleteKcal({ provisional_kcal: "2100" }), 1000);
+  assert.equal(incompleteKcal({ provisional_kcal: "1100" }), 660);
+  assert.equal(incompleteKcal({}), 1000);
 });
 
 test("provisional targets from a few facts, rounded to something a person can hold in their head", () => {

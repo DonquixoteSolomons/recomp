@@ -33,6 +33,25 @@ unusually consistent. Each one is a design decision here:
 | A calorie goal that is too low (the "1200" complaint) | First-week targets come from your own facts and are floored at resting needs; after a week the app measures your real expenditure and takes over. |
 | Nag notifications | None. The streak is on screen, not in your notification tray. |
 
+Across the whole category — a 50,217-review analysis of MyFitnessPal, Yazio,
+Lose It!, Cronometer and Lifesum (Jan 2024 – Mar 2026), and a six-app ranking
+of 1–3 star reviews — the same list comes back with a few more items:
+
+| Category-wide complaint | Recomp |
+| --- | --- |
+| Ads (27% of all complaints; 34% at MFP) and price (26%) | None. |
+| Inaccurate data (16%), database gaps and missing regional food (10%) | Regional food is exactly what the photo-and-description route is for; every card shows its confidence and range. |
+| Shame mechanics (12%): colour-coded foods, red screens, guilt copy | No food is colour-coded. A day over the band is orange, never red, and the card says what actually matters: the week's average. |
+| Streak anxiety (6%): "missed one day and lost a 47-day streak", "made me lie in the log" | One missed day in any seven doesn't break the streak, and the app never mentions losing one. |
+| "Doesn't retain foods you've entered before", "have to search for everything" | Type two letters and your own past entries appear as one-tap chips. Regulars (eaten 3+ times) stay one tap without typing. |
+| Data export and deletion locked away (5%) | Save a copy, Export CSV, and **Delete everything** are all in Settings, all free. |
+| Wearable sync that double-counts (11%, Android twice iOS) | No wearable sync yet — and no double counting. |
+
+Sources: Unstar, *Is MyFitnessPal Premium worth it? 202 reviews* (July 2026);
+Unstar, *6 calorie tracking apps ranked by 1-star reviews* (2026); Nutrola,
+*50,000 calorie tracker reviews analysed* (2026); Trustpilot MyFitnessPal 1-star
+reviews (Jul–Sep 2026); Bento Bunny on the 2026 MFP redesign; PissedConsumer.
+
 Set-up asks for a minute of facts (units, sex, age, height, weight, activity,
 goal) and derives the first week's targets. Workout kinds are your own
 (Settings), weight shows in kg or lb, and the log never depends on the AI
@@ -107,7 +126,8 @@ press, and a streak. Green is protein and done, blue is calories, purple is
 training, orange is attention, red is over.
 
 **Today** is your status and your log. The top strip shows the logging streak
-(lit once today has ≥1,000 kcal logged) and the latest weigh-in. The status
+(lit once today counts as a complete day — 60% of your rest-day base, at most
+1,000 kcal — and forgiving of one missed day a week) and the latest weigh-in. The status
 card has the verdict ("Day complete" / "Protein first" / "Over the calorie
 band"), protein and calorie bars, and four daily goals with check marks
 (protein floor, calories, weigh-in, session). Then everything logged today,

@@ -124,7 +124,7 @@ details[open]>summary::after{transform:rotate(-135deg)}
 .bar.blue .fill{background:var(--blue)}
 /* state colours: protein short = attention, over the ceiling is still done; calories over = red */
 .bar .fill.short{background:var(--orange)} .bar .fill.hit,.bar .fill.in{background:var(--green)} .bar .fill.under{background:var(--blue)}
-.bar.green .fill.over{background:var(--green)} .bar.blue .fill.over{background:var(--red)}
+.bar.green .fill.over{background:var(--green)} .bar.blue .fill.over{background:var(--orange)}   /* over is attention, never a red screen: the week average is the number that matters */
 .tick{position:absolute;top:0;bottom:0;width:3px;background:var(--ink);opacity:.35;border-radius:2px}
 .band{position:absolute;top:0;bottom:0;background:var(--green);opacity:.28}
 .meter-foot{font-size:12px;color:var(--muted);line-height:1.4}
@@ -244,6 +244,10 @@ textarea.text{resize:vertical;min-height:92px;line-height:1.4}
 .rchip .rx svg{width:16px;height:16px}
 .rchip .rx:active{background:var(--red-bg);color:var(--red)}
 #recent-wrap{display:flex;flex-direction:column;gap:10px}
+#recall:empty{display:none}
+.chip.recall{min-height:56px;text-align:left;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:8px 12px;border:2px solid var(--line);border-bottom-width:4px;border-radius:var(--r-s);background:var(--card);font-size:14px;font-weight:800;line-height:1.2}
+.chip.recall:active{transform:translateY(2px);border-bottom-width:2px;background:var(--green-bg);border-color:var(--green)}
+.chip.recall small{font-size:12px;color:var(--muted);font-weight:700}
 
 /* ---------------------------------------------------------------- sheets */
 dialog.sheet{

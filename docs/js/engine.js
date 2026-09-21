@@ -9,7 +9,9 @@
 export const KCAL_PER_KG = 7700;
 export const EMA_ALPHA = 0.10;
 export const MIN_DAYS = 7;
-export const INCOMPLETE_KCAL = 1000;   // a day logged under this is a forgotten day, not a fast
+export const INCOMPLETE_KCAL = 1000;   // a day logged under this is a forgotten day, not a fast (ceiling; see incompleteKcal)
+/** The bar for a "complete" day scales with the person: 60% of their rest-day base, never above 1000. */
+export const incompleteKcal = (settings) => { const base = parseFloat(settings?.provisional_kcal); return Number.isFinite(base) && base > 0 ? Math.min(INCOMPLETE_KCAL, Math.round(base * 0.6)) : INCOMPLETE_KCAL; };
 export const TREND_GAP_DAYS = 14;      // a gap longer than this restarts the trend at the next reading
 
 const dayOf = (d) => (d instanceof Date ? d : new Date(d + "T00:00:00"));
@@ -61,7 +63,7 @@ export function weekSummary(meals, workouts, bodyRows, settings, asOf) {
   const start = addDays(asOf, -6);
   const intake = dailyIntake(meals.filter(m => m.day >= start && m.day <= asOf));
   const pf = parseFloat(settings.protein_floor_g || "0");
-  const complete = [...intake.values()].filter(v => v.kcal >= INCOMPLETE_KCAL);
+  const complete = [...intake.values()].filter(v => v.kcal >= incompleteKcal(settings));
   const proteinDays = [...intake.values()].filter(v => v.protein >= pf).length;
   const sessions = workouts.filter(w => w.day >= start && w.day <= asOf);
   const trend = weightTrend(bodyRows.filter(b => b.day >= addDays(start, -7) && b.day <= asOf), settings);
@@ -95,16 +97,24 @@ export function provisionalTargets({ sex = "male", age = 30, height_cm = 170, we
   };
 }
 
-/** Consecutive logged days ending today (or yesterday, if today is not complete yet).
-    A day counts when its intake reaches INCOMPLETE_KCAL — the same bar the engine uses.
-    { days, today: whether today already counts } */
+/** Logged days in a row, ending today (or yesterday while today is still open). A day counts
+    when its intake reaches the person's complete-day bar. One missed day in any seven is
+    forgiven — a rest day or a day off the phone does not wipe out a month — so nobody has to
+    lie in the log to keep a number. { days, today, graceUsed } */
 export function streak(meals, asOf, minKcal = INCOMPLETE_KCAL) {
   const intake = dailyIntake(meals);
   const counts = (d) => (intake.get(d)?.kcal || 0) >= minKcal;
   const today = counts(asOf);
-  let d = today ? asOf : addDays(asOf, -1), days = 0;
-  while (counts(d)) { days++; d = addDays(d, -1); }
-  return { days, today };
+  let d = today ? asOf : addDays(asOf, -1), days = 0, graceUsed = 0, pending = false;
+  const misses = [];                                   // offsets (in days back) of forgiven misses
+  for (let back = 0; ; back++, d = addDays(d, -1)) {
+    if (counts(d)) { days++; if (pending) { graceUsed++; pending = false; } continue; }   // a miss only "counts" as grace once the run continues past it
+    if (days === 0) break;                             // the run has to start with a logged day
+    const recent = misses.filter(m => back - m < 7).length;
+    if (recent >= 1) break;                            // a second miss inside seven days ends it
+    misses.push(back); pending = true;
+  }
+  return { days, today, graceUsed };
 }
 
 export function dailyIntake(meals) {
@@ -134,7 +144,7 @@ export function estimateExpenditure(meals, bodyRows, settings, asOf, window = 21
   const end = addDays(asOf, -1), start = addDays(end, -(window - 1));
   const deficit = parseFloat(settings.recomp_deficit_kcal || "250");
   const intake = dailyIntake(meals.filter(m => m.day >= start && m.day <= end));
-  const good = [...intake.entries()].filter(([, v]) => v.kcal >= INCOMPLETE_KCAL);
+  const good = [...intake.entries()].filter(([, v]) => v.kcal >= incompleteKcal(settings));
   const trend = weightTrend(bodyRows.filter(b => b.day >= start && b.day <= end), settings).filter(p => !p.creatine);
 
   const base = { as_of: asOf, window_days: window, days_with_intake: good.length, intake_avg: null,
