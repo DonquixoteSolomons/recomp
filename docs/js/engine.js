@@ -76,6 +76,25 @@ export function weekSummary(meals, workouts, bodyRows, settings, asOf) {
 }
 export const sessionsKcal = (workouts, settings) => workouts.reduce((a, w) => a + sessionKcal(w, settings), 0);
 
+/** First-week targets from a few facts, until the engine can measure. Mifflin-St Jeor for the
+    resting side; the activity factor covers the day's non-training movement only, because logged
+    sessions are added on top per day. Goal moves the base and the protein range. */
+export function provisionalTargets({ sex = "male", age = 30, height_cm = 170, weight_kg = 70, activity = "desk", goal = "recomp" }) {
+  const bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + (sex === "female" ? -161 : 5);
+  const factor = { desk: 1.2, mixed: 1.35, feet: 1.5 }[activity] ?? 1.2;
+  const adjust = { recomp: -250, cut: -500, maintain: 0, gain: 250 }[goal] ?? -250;
+  const perKg = goal === "recomp" || goal === "cut" ? [1.8, 2.2] : [1.6, 2.0];
+  const r5 = (x) => Math.round(x / 5) * 5, r50 = (x) => Math.round(x / 50) * 50;
+  return {
+    provisional_kcal: Math.max(r50(bmr), r50(bmr * factor + adjust)),   // never below resting needs on a rest day, whatever the goal
+    recomp_deficit_kcal: Math.abs(Math.min(0, adjust)) || 250,
+    protein_floor_g: r5(weight_kg * perKg[0]), protein_ceiling_g: r5(weight_kg * perKg[1]),
+    weight_lo_kg: goal === "recomp" || goal === "maintain" ? Math.round((weight_kg - 2) * 10) / 10 : null,
+    weight_hi_kg: goal === "recomp" || goal === "maintain" ? Math.round((weight_kg + 2) * 10) / 10 : null,
+    bmr: Math.round(bmr),
+  };
+}
+
 /** Consecutive logged days ending today (or yesterday, if today is not complete yet).
     A day counts when its intake reaches INCOMPLETE_KCAL — the same bar the engine uses.
     { days, today: whether today already counts } */

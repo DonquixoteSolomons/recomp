@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays, streak } from "../js/engine.js";
+import { estimateExpenditure, currentTarget, weightTrend, verdict, addDays, streak, provisionalTargets } from "../js/engine.js";
 import { shake, computeFromIdentification, REFERENCE, QUICK, DEFAULT_PRODUCTS } from "../js/foods.js";
 
 const S = { creatine_start: "2000-01-01", creatine_settle_days: "28", recomp_deficit_kcal: "250",
@@ -235,4 +235,17 @@ test("streak: consecutive complete days, today counted only once it is complete"
   assert.deepEqual(streak([...meals, day("2026-09-19", 900)], "2026-09-19"), { days: 5, today: true });
   assert.deepEqual(streak(meals.filter(m => m.day !== "2026-09-17"), "2026-09-19"), { days: 1, today: false });   // a missed day resets
   assert.deepEqual(streak([], "2026-09-19"), { days: 0, today: false });
+});
+
+test("provisional targets from a few facts, rounded to something a person can hold in their head", () => {
+  const t = provisionalTargets({ sex: "male", age: 26, height_cm: 169, weight_kg: 75, activity: "desk", goal: "recomp" });
+  assert.equal(t.bmr, 1681);                                   // 750 + 1056.25 - 130 + 5
+  assert.equal(t.provisional_kcal, 1750);                      // 1681 * 1.2 - 250 = 1767 -> 1750
+  assert.deepEqual([t.protein_floor_g, t.protein_ceiling_g], [135, 165]);   // 1.8-2.2 g/kg
+  assert.deepEqual([t.weight_lo_kg, t.weight_hi_kg], [73, 77]);
+  const f = provisionalTargets({ sex: "female", age: 40, height_cm: 160, weight_kg: 60, activity: "feet", goal: "gain" });
+  assert.equal(f.bmr, 1239); assert.equal(f.provisional_kcal, 2100); assert.deepEqual([f.protein_floor_g, f.protein_ceiling_g], [95, 120]);
+  assert.equal(f.weight_lo_kg, null);
+  const small = provisionalTargets({ sex: "female", age: 45, height_cm: 155, weight_kg: 52, activity: "desk", goal: "cut" });
+  assert.equal(small.bmr, 1103); assert.equal(small.provisional_kcal, 1100);   // 1103 * 1.2 - 500 = 824 would be the MyFitnessPal mistake; floor at resting needs
 });

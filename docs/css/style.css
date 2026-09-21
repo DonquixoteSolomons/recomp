@@ -228,6 +228,8 @@ textarea.text{resize:vertical;min-height:92px;line-height:1.4}
 .seg button:active{transform:translateY(2px);border-bottom-width:2px}
 .seg button.on{background:var(--blue-bg);border-color:var(--blue);color:var(--blue-ink)}
 .options{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.options .opt.wide{grid-column:1 / -1}
+#setup-goal .opt:first-child{grid-column:1 / -1}
 .opt{min-height:50px;border:2px solid var(--line);border-bottom-width:4px;border-radius:var(--r-s);font-size:15px;font-weight:800;color:var(--ink);background:var(--card);padding:0 10px}
 .opt:active{transform:translateY(2px);border-bottom-width:2px}
 .opt.on{background:var(--purple-bg);border-color:var(--purple);color:var(--purple-ink)}
@@ -334,3 +336,10 @@ canvas{width:100%;display:block;border-radius:var(--r-s);background:var(--sunken
 .toast.good{background:var(--green);color:#fff}
 .toast.bad{background:var(--red);color:#fff}
 @keyframes toastin{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+
+/* settings: workout kinds editor */
+.kind-row{display:grid;grid-template-columns:1fr 92px 40px;gap:8px;align-items:center}
+.kind-row .x{width:40px;height:40px;border-radius:50%;color:var(--faint);display:grid;place-items:center}
+.kind-row .x svg{width:16px;height:16px}
+.kind-row .x:active{background:var(--red-bg);color:var(--red)}
+.callout b{color:inherit}

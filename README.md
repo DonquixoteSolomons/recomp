@@ -16,6 +16,29 @@ No server, no laptop, nothing to keep running, $0.
 still work but are not the primary app any more; `tools/export_seed.py`
 turned that database into `data-repo/seed.json` for the phone app.
 
+## What the MyFitnessPal reviews taught it
+
+MyFitnessPal is the most-installed tracker on Google Play. In its 300 most
+recent US reviews (July 2026) 202 were 1–3 stars, and the complaints are
+unusually consistent. Each one is a design decision here:
+
+| What people leave MFP over | Recomp |
+| --- | --- |
+| Barcode scanner moved behind Premium (29% of low reviews mention the paywall) | **Scan** reads the barcode on the phone itself and looks it up in Open Food Facts — open data, no key, no account — and falls back to reading the printed panel. Nothing is paywalled; there is no Premium. |
+| The 2026 redesign made logging "4–5 taps", a "scavenger hunt through menus" | A regular is two taps (Meal → chip). A shake is two. The one primary action sits pinned at the bottom of every sheet. Nothing moves between versions to sell you something. |
+| Random logouts, two years of history lost | No account, no login. Data lives on the phone; back up to your own GitHub repo, or *Save a copy* to Drive / a file, or export CSV. |
+| Ads, full-screen upsells, $19.99/month | None. Free, open source. |
+| Crowd-sourced database: three calorie counts for one product, duplicates, "no results" | No crowd database. Photos and descriptions are identified against a curated reference table with honest ranges; packaged food comes from the label or Open Food Facts; the confidence is shown on every card and the model's own guesses are flagged. |
+| Wearable sync that double-counts or drops exercise | Sessions are counted once and move calories between days; they never inflate the week. The expenditure figure is measured from your own intake and weight, not a formula. |
+| A calorie goal that is too low (the "1200" complaint) | First-week targets come from your own facts and are floored at resting needs; after a week the app measures your real expenditure and takes over. |
+| Nag notifications | None. The streak is on screen, not in your notification tray. |
+
+Set-up asks for a minute of facts (units, sex, age, height, weight, activity,
+goal) and derives the first week's targets. Workout kinds are your own
+(Settings), weight shows in kg or lb, and the log never depends on the AI
+being up — a meal that can't be valued is parked in the log and valued later
+on its own.
+
 ## Set up once (about 20 minutes, all free)
 
 ### 1. Private data repo
@@ -94,12 +117,13 @@ open as sheets with the one primary action pinned at the bottom:
 - **Meal** — *Regulars* are learned from your own log (eaten 3+ times,
   frequency with recency decay), one tap to repeat, × to hide. **Camera**, **Gallery** (pick existing
   photos), or **Label** (a nutrition panel → exact values, then how much you
-  had). Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**. Refine
-  with a correction; Add to log. "Type it in" for the rare manual entry.
+  had). **Scan** is a barcode (Open Food Facts, no key) with the printed panel
+  as the fallback. Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**.
+  Refine with a correction; Add to log. "Type it in" for the rare manual entry.
 - **Shake** — typed grams, product pickers, exact arithmetic; opens on what
   you made last time. **＋ New tub or carton** opens the product form with
   **Read the label**: photo → per-100ml or per-gram values filled in.
-- **Workout** — classes and cardio (REVL Move/Sweat/Perform, Run, Swim) take
+- **Workout** — your own kinds (Settings; classes, run, swim, cycle, walk…) take
   minutes, km, and kcal if your watch or Strava shows it — or **From
   screenshot**, which reads those off a Strava/Garmin/REVL summary. A kcal
   figure overrides the per-kind default. **Strength** takes exercise × sets
@@ -180,6 +204,7 @@ docs/               the phone app (GitHub Pages)
   js/engine.js      weight trend (EMA display, OLS rate) + expenditure + verdict
   js/estimate.js    Gemini: one structured identification call, free-tier limit handling
   js/sync.js        GitHub Contents API: body.json, seed.json, backup.json
+  js/barcode.js     BarcodeDetector + Open Food Facts → the label-reader shape
   js/app.js         UI
   test/             node --test "docs/test/*.test.mjs"
 data-repo/          template for the private repo (workflow + renpho_pull.py + seed.json)

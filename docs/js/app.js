@@ -5,6 +5,7 @@ import { DEFAULT_PRODUCTS, shake, recentFoods, normFoodLabel, EXERCISES, e1rm, l
 import * as eng from "./engine.js";
 import { estimate as runGemini, readLabel, readWorkout, prepareImage, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
+import { detectBarcode, lookupBarcode } from "./barcode.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -16,9 +17,14 @@ const nowHM = () => { const p = new Intl.DateTimeFormat("en-GB", { timeZone: SGT
 /** Timestamp for an entry on the viewed day at the given HH:MM (defaults: now if today, 12:00 otherwise). */
 const atFor = (hm) => `${state.day}T${hm || (state.day === todayStr() ? nowHM() : "12:00")}+08:00`;
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+// weight is stored in kg; shown and typed in the person's unit
+const unit = () => (state.settings.units === "lb" ? "lb" : "kg");
+const toUnit = (kg) => unit() === "lb" ? kg * 2.20462 : kg;
+const fromUnit = (x) => unit() === "lb" ? x / 2.20462 : x;
+const wfmt = (kg, dp = 1) => `${fmt(toUnit(kg), dp)} ${unit()}`;
 
 const state = { day: todayStr(), settings: {}, data: null, tab: "today", trend: null, products: [],
-  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, label: null, wo: { kind: "revl_move", sets: [], shot: null } };
+  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, label: null, wo: { kind: null, sets: [], shot: null } };
 
 let toastT;
 function toast(msg, ms = 1800, kind = null) {
@@ -110,8 +116,15 @@ async function loadDay(day = state.day) {
   render();
 }
 
-const labelKind = (k) => ({ revl_move: "REVL Move", revl_sweat: "REVL Sweat", revl_perform: "REVL Perform",
-  run_vest: "Vest run", calves: "Calves", run: "Run", lift: "Strength", swim: "Swim", other: "Workout" }[k] || k);
+/** The person's workout kinds (Settings). Strength (key "lift") is always there: it is the one with sets. */
+function kinds() {
+  let list = []; try { list = JSON.parse(state.settings.workout_kinds || "[]"); } catch {}
+  list = list.filter(k => k && k.key && k.label);
+  if (!list.some(k => k.key === "lift")) list.push({ key: "lift", label: "Strength" });
+  return list;
+}
+const LEGACY_KINDS = { revl_move: "REVL Move", revl_sweat: "REVL Sweat", revl_perform: "REVL Perform", run_vest: "Vest run", calves: "Calves", run: "Run", lift: "Strength", swim: "Swim", cycle: "Cycle", walk: "Walk", class: "Class", other: "Workout" };
+const labelKind = (k) => kinds().find(x => x.key === k)?.label || LEGACY_KINDS[k] || k;
 const workoutLine = (w, { kcal = true } = {}) => {
   if (w.sets?.length) { const by = {}; for (const s of w.sets) (by[s.exercise] ||= []).push(`${s.weight}×${s.reps}`); return Object.entries(by).map(([e, ss]) => `${e} ${ss.join(", ")}`).join(" · "); }
   return [w.duration_min ? `${w.duration_min} min` : null, w.distance_km ? `${w.distance_km} km` : null, kcal && w.kcal ? `${w.kcal} kcal` : null, w.detail].filter(Boolean).join(" · ");
@@ -133,9 +146,9 @@ function render() {
     chip.hidden = false; chip.classList.toggle("oob", !!d.body.out_of_bounds);
     // one short line: "74.9 kg · 25.9%" today, or the date instead of the fat when the reading is older
     const stale = d.body.day !== todayStr();
-    chip.querySelector("b").textContent = `${fmt(d.body.weight, 1)} kg`;
+    chip.querySelector("b").textContent = wfmt(d.body.weight, 1);
     chip.querySelector("small").textContent = stale ? d.body.day.slice(5).replace("-", "/") : (d.body.bodyfat != null ? `${fmt(d.body.bodyfat, 1)}%` : "");
-    chip.title = `${fmt(d.body.weight, 2)} kg${d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}% fat` : ""} · ${stale ? d.body.day : "today"}`;
+    chip.title = `${wfmt(d.body.weight, 2)}${d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}% fat` : ""} · ${stale ? d.body.day : "today"}`;
     chip.onclick = () => showTab("trend");
   } else chip.hidden = true;
 
@@ -175,7 +188,7 @@ function render() {
     if (r._t === "meal") {
       const parked = r.source === "pending", isShake = r.source === "shake";
       li.className = parked ? "pending" : isShake ? "shake" : "";
-      const sub = [time, parked ? "waiting for AI · retries on its own" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" || r.source === "backfill-est" ? "from chat · valued" : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : null,
+      const sub = [time, parked ? "waiting for AI · retries on its own" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" || r.source === "backfill-est" ? "from chat · valued" : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : r.source === "barcode" ? "barcode" : null,
         r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
       li.innerHTML = `<span class="ic">${icon(isShake ? "shake" : "meal")}</span><span class="l"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span><span class="n"><b>${parked ? "?" : fmt(r.protein_g, 0) + " g"}</b><small>${parked ? "?" : fmt(r.kcal) + " kcal"}</small></span>`;
       li.onclick = () => openRow(r, "meal");
@@ -193,7 +206,7 @@ function render() {
       <div class="stat-tile"><b>${w.kcal_avg != null ? fmt(w.kcal_avg) : "—"}</b><span>kcal / complete day</span></div>
       <div class="stat-tile"><b>${w.protein_days}/${w.days_logged || 0}</b><span>days protein hit</span></div>
       <div class="stat-tile"><b>${w.sessions}</b><span>sessions · ${fmt(w.session_kcal)} kcal</span></div>
-      <div class="stat-tile"><b>${w.weight_to != null ? fmt(w.weight_to, 1) : "—"}</b><span>${w.weight_from != null && w.weight_to != null ? `trend ${w.weight_to - w.weight_from >= 0 ? "+" : ""}${fmt(w.weight_to - w.weight_from, 2)} kg` : "weight trend"}${w.bodyfat != null ? ` · ${fmt(w.bodyfat, 1)}% fat` : ""}</span></div>
+      <div class="stat-tile"><b>${w.weight_to != null ? fmt(toUnit(w.weight_to), 1) : "—"}</b><span>${w.weight_from != null && w.weight_to != null ? `trend ${w.weight_to - w.weight_from >= 0 ? "+" : ""}${fmt(toUnit(w.weight_to - w.weight_from), 2)} ${unit()}` : "weight trend"}${w.bodyfat != null ? ` · ${fmt(w.bodyfat, 1)}% fat` : ""}</span></div>
     </div>`;
   $("#est-hint").hidden = !!state.settings.gemini_key;
   showSyncWarn();
@@ -251,17 +264,31 @@ $("#meal-foot").onclick = (e) => {
   else if (b.id === "label-add") state.labelAdd?.();
 };
 
-// label photo -> exact values -> servings -> add
+/** One photo of a package: the barcode when the phone can read one and Open Food Facts knows it,
+    otherwise the model reads the printed nutrition panel. Same result shape either way. */
+async function readPackage(file, onStatus) {
+  onStatus("looking for a barcode…");
+  const code = await detectBarcode(file);
+  if (code) {
+    onStatus(`barcode ${code} — looking it up…`);
+    try { const L = await lookupBarcode(code); if (L) { const { thumb } = await prepareImage(file); return { data: L, thumb, via: "barcode" }; } onStatus(`${code} is not in Open Food Facts — reading the label…`); }
+    catch { onStatus("Open Food Facts didn't answer — reading the label…"); }
+  } else onStatus("reading label…");
+  const { data, thumb, model } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: file, onStatus }));
+  await rememberModel(model);
+  return { data, thumb, via: "label" };
+}
+
+// package photo -> exact values -> how much -> add
 $("#est-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  $("#est-status").textContent = "reading label…";
   try {
-    const { data: L, thumb, model: used } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: (m) => $("#est-status").textContent = m }));
-    await rememberModel(used); state.label = L; $("#est-status").textContent = `label · ${L.confidence}`;
+    const { data: L, thumb, via } = await readPackage(f, (m) => $("#est-status").textContent = m);
+    state.label = L; $("#est-status").textContent = via === "barcode" ? `Open Food Facts · ${L.code}` : `label · ${L.confidence}`;
     const per = L.basis === "serving" ? `per serving (${esc(L.serving_size)})` : `per ${L.basis}`;
     const box = $("#est-result"); box.hidden = false;
     box.innerHTML = `<div class="estcard">
-      <div class="dish"><b>${esc(L.product)}</b><span class="pill ${L.confidence === "high" ? "good" : L.confidence === "medium" ? "medium" : "low"}">label</span></div>
+      <div class="dish"><b>${esc(L.product)}</b><span class="pill ${L.confidence === "high" ? "good" : L.confidence === "medium" ? "medium" : "low"}">${via}</span></div>
       <div class="thumbs"><img src="data:image/jpeg;base64,${thumb}" alt=""></div>
       <p><b>${per}:</b> ${fmt(L.kcal)} kcal · ${fmt(L.protein_g, 1)} g protein${L.servings_per_pack ? ` · ${L.servings_per_pack} servings per pack` : ""}</p>
       <div class="row gap bottom">
@@ -275,10 +302,10 @@ $("#est-label").addEventListener("change", async (e) => {
     setMealFoot("label");
     state.labelAdd = async () => {
       const { kc, p, q } = calc();
-      await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: "label", share: 1, detail: { label: L } });
+      await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: via, share: 1, detail: { label: L } });
       toast(`Added ${L.product}`); resetEstimate(); closeSheets(); changed();
     };
-  } catch (err) { $("#est-status").textContent = ""; $("#est-result").hidden = false; $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't read the label.</b><small>${esc(err.message)}</small></div>`; }
+  } catch (err) { $("#est-status").textContent = ""; $("#est-result").hidden = false; $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't read the package.</b><small>${esc(err.message)}</small></div>`; }
 });
 
 // Google retires a model -> switch and retry once
@@ -518,10 +545,8 @@ const syncPer = () => { const per = $("#product-kind").value === "whey" ? "/g" :
 $("#product-kind").addEventListener("change", syncPer);
 $("#prod-label").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  $("#prod-status").textContent = "reading…";
   try {
-    const { data: L, model: usedL } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: (m) => $("#prod-status").textContent = m }));
-    await rememberModel(usedL);
+    const { data: L } = await readPackage(f, (m) => $("#prod-status").textContent = m);
     const form = $("#product-form");
     form.kind.value = L.kind === "whey" ? "whey" : "milk"; syncPer();
     form.label.value = L.product;
@@ -547,12 +572,19 @@ $("#product-form").onsubmit = async (e) => {
 };
 
 // ------------------------------------------------------------ workouts
-const CARDIO = new Set(["revl_move", "revl_sweat", "revl_perform", "run", "swim"]);
 function renderWorkoutSheet() {
+  const list = kinds();
+  if (!list.some(k => k.key === state.wo.kind)) state.wo.kind = list[0].key;
+  const kbox = $("#wo-kinds");
+  if (kbox.dataset.keys !== list.map(k => k.key).join(",")) {                      // rebuilt only when the set changes
+    kbox.innerHTML = list.map(k => `<button class="opt" data-kind="${esc(k.key)}">${esc(k.label)}</button>`).join("");
+    kbox.dataset.keys = list.map(k => k.key).join(",");
+    $$("#wo-kinds .opt").forEach(c => c.onclick = () => { state.wo.kind = c.dataset.kind; renderWorkoutSheet(); });
+  }
   $$("#wo-kinds .opt").forEach(c => c.classList.toggle("on", c.dataset.kind === state.wo.kind));
   const strength = state.wo.kind === "lift";
   $("#wo-cardio").hidden = strength; $("#wo-strength").hidden = !strength;
-  $("#wo-km").parentElement.hidden = !["run", "swim"].includes(state.wo.kind);
+  $("#wo-km").parentElement.hidden = !/run|swim|cycle|walk|ride|hike|row/i.test(state.wo.kind + " " + labelKind(state.wo.kind));
   const dflt = parseFloat(state.settings["burn_" + state.wo.kind] || state.settings.burn_other || 0);
   $("#wo-burn-note").textContent = `Without a kcal figure, ${labelKind(state.wo.kind)} counts as ${fmt(dflt)} kcal (change it in Settings). A screenshot with calories overrides it.`;
   if (!$("#wo-exercise").options.length) for (const x of EXERCISES) { const o = document.createElement("option"); o.value = x; o.textContent = x; $("#wo-exercise").appendChild(o); }
@@ -564,7 +596,6 @@ function renderWorkoutSheet() {
     box.appendChild(el);
   });
 }
-$$("#wo-kinds .opt").forEach(c => c.onclick = () => { state.wo.kind = c.dataset.kind; renderWorkoutSheet(); });
 $("#wo-addset").onclick = () => {
   const w = parseFloat($("#wo-w").value), r = parseInt($("#wo-r").value, 10);
   if (!Number.isFinite(w) || !r) return toast("Weight and reps");
@@ -604,7 +635,7 @@ $("#wo-log").onclick = async () => {
 
 // ------------------------------------------------------------ weigh-in by hand
 $("#bw-log").onclick = async () => {
-  const w = parseFloat($("#bw-kg").value); if (!w) return toast("Weight?");
+  const w = fromUnit(parseFloat($("#bw-kg").value)); if (!w) return toast("Weight?");
   const bf = parseFloat($("#bw-bf").value), at = atFor(state.day === todayStr() ? nowHM() : "07:00");
   try {
     await db.add("body", { day: at.slice(0, 10), at, weight_kg: w, bodyfat_pct: Number.isFinite(bf) ? bf : null, muscle_kg: null, water_pct: null, source: "manual", ext_id: `manual:${at}:${Date.now()}` });
@@ -626,7 +657,8 @@ async function loadTrend() {
     weight_lo: bounded ? wl : null, weight_hi: bounded ? wh : null, creatine_window: eng.creatineWindow(s) };
   drawChart(); renderExpenditure(); renderLifts();
   const last = state.trend.points.at(-1);
-  $("#trend-latest").textContent = last ? fmt(last.weight, 2) + " kg" : "no weigh-ins yet";
+  $("#trend-latest").textContent = last ? wfmt(last.weight, 2) : "no weigh-ins yet";
+  $("#bw-unit").textContent = unit();
   $("#btn-fixall").hidden = !state.all.meals.some(m => m.needs_review || looksPartial(m));
   $("#backup-state").textContent = backupStateText();
   // how current the scale data is — answers "why isn't today's weigh-in here"
@@ -634,8 +666,8 @@ async function loadTrend() {
   const el = $("#body-fresh");
   if (lastBody) {
     const days = Math.round((new Date(todayStr()) - new Date(lastBody.day)) / 864e5);
-    el.textContent = days === 0 ? `Latest weigh-in: today, ${lastBody.weight_kg} kg.`
-      : `Latest weigh-in: ${lastBody.day} (${days} day${days > 1 ? "s" : ""} ago), ${lastBody.weight_kg} kg. The Renpho job runs every 3 hours — Pull weigh-ins asks it to run now.`;
+    el.textContent = days === 0 ? `Latest weigh-in: today, ${wfmt(lastBody.weight_kg, 2)}.`
+      : `Latest weigh-in: ${lastBody.day} (${days} day${days > 1 ? "s" : ""} ago), ${wfmt(lastBody.weight_kg, 2)}.${state.settings.gh_token ? " The scale job runs every 3 hours — Fetch scale now asks it to run now." : ""}`;
     el.className = days >= 2 ? "note warn" : "note";
   } else el.textContent = "";
 }
@@ -659,8 +691,8 @@ function drawSeries(c, H, pts, key, trendKey, opts) {
   const room = Math.max(opts.minRange, (hi - lo) * 0.25); lo -= room; hi += room;
   const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
   if (opts.band) {
-    ctx.fillStyle = col("--ok"); ctx.globalAlpha = 0.12; ctx.fillRect(pad.l, y(opts.band[1]), W - pad.l - pad.r, y(opts.band[0]) - y(opts.band[1])); ctx.globalAlpha = 1;
-    ctx.fillStyle = col("--ok"); ctx.font = "10px " + col("--font"); ctx.textAlign = "left";
+    ctx.fillStyle = col("--green"); ctx.globalAlpha = 0.14; ctx.fillRect(pad.l, y(opts.band[1]), W - pad.l - pad.r, y(opts.band[0]) - y(opts.band[1])); ctx.globalAlpha = 1;
+    ctx.fillStyle = col("--green-ink"); ctx.font = "10px " + col("--font"); ctx.textAlign = "left";
     ctx.fillText(String(opts.band[1]), W - pad.r + 4, y(opts.band[1]) + 3); ctx.fillText(String(opts.band[0]), W - pad.r + 4, y(opts.band[0]) + 3);
   }
   if (opts.creatine) {
@@ -682,20 +714,21 @@ function drawSeries(c, H, pts, key, trendKey, opts) {
   ctx.font = "11px " + col("--font"); ctx.textAlign = "left"; ctx.fillText(opts.fmt(lv), x(last.day) + 8, y(lv) - 6);
 }
 function drawChart() {
-  const pts = state.trend.points, wl = state.trend.weight_lo, wh = state.trend.weight_hi;
-  drawSeries($("#chart"), 200, pts, "weight", "trend", { band: wl != null ? [wl, wh] : null, creatine: state.trend.creatine_window, step: 1, minRange: 1,
-    fmt: (v) => Number(v).toFixed(Math.abs(v % 1) > 0.01 ? 1 : 0), color: "--accent", empty: "No weigh-ins yet. Fetch scale now, or log one under More." });
+  const lb = unit() === "lb", cv = (x) => x == null ? null : Math.round(toUnit(x) * 100) / 100;
+  const pts = state.trend.points.map(p => ({ ...p, weight: cv(p.weight), trend: cv(p.trend) })), wl = cv(state.trend.weight_lo), wh = cv(state.trend.weight_hi);
+  drawSeries($("#chart"), 200, pts, "weight", "trend", { band: wl != null ? [wl, wh] : null, creatine: state.trend.creatine_window, step: lb ? 2 : 1, minRange: lb ? 2 : 1,
+    fmt: (v) => Number(v).toFixed(Math.abs(v % 1) > 0.01 ? 1 : 0), color: "--blue", empty: "No weigh-ins yet. Weigh in by hand below, or set up a scale." });
   const note = $("#chart-note");
   if (pts.length >= 2) {
     const a1 = pts.at(-1), a0 = pts.find(p => new Date(a1.day) - new Date(p.day) <= 7 * 864e5) || pts[0];
-    const dlt = a1.trend - a0.trend, dir = Math.abs(dlt) < 0.15 ? "flat" : dlt > 0 ? "up " + fmt(dlt, 1) + " kg" : "down " + fmt(-dlt, 1) + " kg";
-    note.textContent = "Dots are each weigh-in. The line is the smoothed trend and is the number to believe: single readings swing about 1 kg with water. Trend " + fmt(a1.trend, 1) + " kg, " + dir + " over the last week." + (wl != null ? " Green band is your " + wl + "–" + wh + " kg range." : "")
+    const dlt = a1.trend - a0.trend, dir = Math.abs(dlt) < (lb ? 0.33 : 0.15) ? "flat" : dlt > 0 ? "up " + fmt(dlt, 1) + " " + unit() : "down " + fmt(-dlt, 1) + " " + unit();
+    note.textContent = "Dots are each weigh-in. The line is the smoothed trend and is the number to believe: single readings swing about " + (lb ? "2 lb" : "1 kg") + " with water. Trend " + fmt(a1.trend, 1) + " " + unit() + ", " + dir + " over the last week." + (wl != null ? " Green band is your " + wl + "–" + wh + " " + unit() + " range." : "")
       + (state.trend.creatine_window && a1.day <= state.trend.creatine_window[1] ? " Creatine is still settling, so some of this is water, not fat." : "");
   } else note.textContent = pts.length ? "One reading so far. The trend needs a few mornings." : "";
   const bf = pts.filter(p => p.bodyfat != null);
   $("#bf-block").hidden = bf.length < 2;
   if (bf.length >= 2) {
-    drawSeries($("#bfchart"), 140, bf, "bodyfat", null, { band: null, creatine: null, step: 0.5, minRange: 0.6, fmt: (v) => Number(v).toFixed(1) + "%", color: "--accent-2", empty: "" });
+    drawSeries($("#bfchart"), 140, bf, "bodyfat", null, { band: null, creatine: null, step: 0.5, minRange: 0.6, fmt: (v) => Number(v).toFixed(1) + "%", color: "--green", empty: "" });
     const b0 = bf[0], b1 = bf.at(-1);
     $("#bf-latest").textContent = fmt(b1.bodyfat, 1) + "% · " + b1.day.slice(5).replace("-", "/");
     $("#bf-note").textContent = "This is the recomp signal: weight can stay flat while this falls. " + fmt(b0.bodyfat, 1) + "% on " + b0.day.slice(5).replace("-", "/") + " to " + fmt(b1.bodyfat, 1) + "% now. Scale body-fat readings are noisy day to day; watch the direction over weeks.";
@@ -757,7 +790,20 @@ $("#btn-fixall").onclick = (e) => guarded(e.target, async () => {
 });
 $("#btn-backup").onclick = (e) => guarded(e.target, async () => { dataMsg("Backing up…"); const r = await sync.pushBackup(); await db.setSetting("dirty", "0"); dataMsg(`Backed up ${r.meals} meals, ${r.body} weigh-ins.`); await loadTrend(); });
 $("#btn-restore").onclick = (e) => guarded(e.target, async () => { if (!confirm("Replace everything on this phone with the GitHub backup?")) return; const r = await sync.restoreBackup(); dataMsg(r.ok ? `Restored ${r.meals} meals from ${r.exported_at}.` : r.error); await loadProducts(); await loadTrend(); });
-$("#btn-export").onclick = async () => { const blob = new Blob([JSON.stringify(await db.dump())], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `recomp-${todayStr()}.json`; a.click(); };
+async function saveFile(name, text, type) {
+  const file = new File([text], name, { type });
+  if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === "AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+}
+$("#btn-export").onclick = async () => { await saveFile(`recomp-${todayStr()}.json`, JSON.stringify(await db.dump()), "application/json"); await db.setSetting("last_export", new Date().toISOString()); };
+$("#btn-csv").onclick = async () => {
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const rows = [["type", "day", "time", "label", "kcal", "protein_g", "detail"]];
+  for (const m of (await db.all("meals")).sort((a, b) => a.at.localeCompare(b.at))) rows.push(["meal", m.day, m.at.slice(11, 16), m.label, m.kcal, m.protein_g, m.source]);
+  for (const w of (await db.all("workouts")).sort((a, b) => a.at.localeCompare(b.at))) rows.push(["workout", w.day, w.at.slice(11, 16), labelKind(w.kind), eng.sessionKcal(w, state.settings), "", workoutLine(w)]);
+  for (const b of (await db.all("body")).sort((a, b) => a.at.localeCompare(b.at))) rows.push(["weight", b.day, b.at.slice(11, 16), `${b.weight_kg} kg`, "", "", b.bodyfat_pct != null ? `${b.bodyfat_pct}% fat` : ""]);
+  await saveFile(`recomp-${todayStr()}.csv`, rows.map(r => r.map(q).join(",")).join("\n"), "text/csv");
+};
 $("#import-file").addEventListener("change", async (e) => {
   const f = e.target.files[0]; if (!f) return; const data = JSON.parse(await f.text());
   if (data.version && data.meals && data.settings && !Array.isArray(data.settings)) { const r = await sync.importSeedData(data); dataMsg(`Imported seed: ${r.meals} meals.`); }
@@ -773,20 +819,85 @@ const SETTINGS = [
   ["weight_lo_kg", "Weight low (kg)", "text"], ["weight_hi_kg", "Weight high (kg)", "text"],
   ["provisional_kcal", "Provisional rest-day base (kcal)", "text"], ["recomp_deficit_kcal", "Recomp deficit (kcal)", "text"],
   ["creatine_start", "Creatine start (YYYY-MM-DD)", "text"], ["creatine_settle_days", "Creatine settle (days)", "text"],
-  ["burn_revl_move", "Burn: REVL Move (kcal)", "text"], ["burn_revl_sweat", "Burn: REVL Sweat", "text"], ["burn_revl_perform", "Burn: REVL Perform", "text"],
-  ["burn_run", "Burn: Run (no kcal given)", "text"], ["burn_swim", "Burn: Swim (no kcal given)", "text"], ["burn_lift", "Burn: Strength session", "text"], ["burn_other", "Burn: other", "text"],
+  ["units", "Weight unit (kg / lb)", "text"],
 ];
+const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "kind";
+function renderKindsEditor(list) {
+  $("#kinds-editor").innerHTML = list.map(k => `<div class="kind-row" data-key="${esc(k.key)}">
+      <input class="text" name="kl_${esc(k.key)}" value="${esc(k.label)}" aria-label="name" ${k.key === "lift" ? "readonly" : ""}>
+      <input class="num" name="kb_${esc(k.key)}" type="number" min="0" step="10" value="${esc(state.settings["burn_" + k.key] ?? "")}" placeholder="kcal" inputmode="numeric">
+      ${k.key === "lift" ? "<span></span>" : `<button class="x" type="button" aria-label="Remove">${icon("close")}</button>`}
+    </div>`).join("");
+  $$("#kinds-editor .x").forEach(b => b.onclick = () => b.closest(".kind-row").remove());
+}
+$("#btn-addkind").onclick = () => {
+  const name = (prompt("Name of the workout kind — e.g. HIIT class, Football, Hike") || "").trim(); if (!name) return;
+  let key = slug(name); const taken = $$("#kinds-editor .kind-row").map(r => r.dataset.key); while (taken.includes(key)) key += "_";
+  const row = document.createElement("div"); row.className = "kind-row"; row.dataset.key = key;
+  row.innerHTML = `<input class="text" name="kl_${esc(key)}" value="${esc(name)}"><input class="num" name="kb_${esc(key)}" type="number" min="0" step="10" value="300" inputmode="numeric"><button class="x" type="button" aria-label="Remove">${icon("close")}</button>`;
+  row.querySelector(".x").onclick = () => row.remove();
+  $("#kinds-editor").insertBefore(row, $("#kinds-editor .kind-row[data-key=lift]"));
+};
+$("#btn-setup").onclick = () => { $("#settings").close(); openSetup(); };
 $("#btn-settings").onclick = async () => {
   const s = await db.allSettings();
-  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || k === "ai_model" ? "wide" : ""}">${l}<input class="num" type="${type}" name="${k}" value="${esc(s[k] ?? "")}" autocomplete="off"></label>`).join("");
+  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || k === "ai_model" ? "wide" : ""}">${l.replace("(kg)", `(${unit()})`)}<input class="num" type="${type}" name="${k}" value="${esc(k.startsWith("weight_") && s[k] ? fmt(toUnit(parseFloat(s[k])), 1) : (s[k] ?? ""))}" autocomplete="off"></label>`).join("");
+  renderKindsEditor(kinds());
   $("#settings").showModal();
 };
 $("#settings-form").onsubmit = async (e) => {
   if (e.submitter?.value !== "save") return;
   const f = new FormData(e.target);
   if (String(f.get("ai_model") ?? "").trim() !== (state.settings.ai_model || "")) await db.setSetting("ai_model_ok", "");
-  for (const [k] of SETTINGS) await db.setSetting(k, String(f.get(k) ?? "").trim());
+  const units = /lb/i.test(String(f.get("units") || "")) ? "lb" : "kg", wasLb = unit() === "lb";
+  for (const [k] of SETTINGS) {
+    let v = String(f.get(k) ?? "").trim();
+    if (k === "units") v = units;
+    else if (k.startsWith("weight_") && v) { const n = parseFloat(v); v = Number.isFinite(n) ? String(Math.round((wasLb ? n / 2.20462 : n) * 100) / 100) : ""; }   // typed in the old unit, stored in kg
+    await db.setSetting(k, v);
+  }
+  const list = $$("#kinds-editor .kind-row").map(r => ({ key: r.dataset.key, label: String(f.get("kl_" + r.dataset.key) || "").trim() || r.dataset.key })).filter(k => k.label);
+  await db.setSetting("workout_kinds", JSON.stringify(list));
+  for (const k of list) { const b = String(f.get("kb_" + k.key) ?? "").trim(); if (b !== "") await db.setSetting("burn_" + k.key, b); }
   toast("Saved"); await loadDay(); if (state.tab === "trend") await loadTrend();
+};
+
+// ------------------------------------------------------------ first run: a minute of facts -> first-week targets
+const optPick = (sel) => { $$(sel + " .opt").forEach(b => b.onclick = () => { $$(sel + " .opt").forEach(x => x.classList.toggle("on", x === b)); setupPreview(); }); };
+optPick("#setup-activity"); optPick("#setup-goal");
+const setupVals = () => {
+  const f = $("#setup-form"), lb = f.units.value === "lb", w = parseFloat(f.weight.value);
+  return { sex: f.sex.value, age: parseInt(f.age.value, 10), height_cm: parseFloat(f.height_cm.value), weight_kg: lb ? w / 2.20462 : w, units: f.units.value,
+    activity: $("#setup-activity .opt.on")?.dataset.v || "desk", goal: $("#setup-goal .opt.on")?.dataset.v || "recomp", gemini_key: f.gemini_key.value.trim() };
+};
+function setupPreview() {
+  const v = setupVals(); $("#setup-unit").textContent = v.units;
+  if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) { $("#setup-preview").textContent = ""; return; }
+  const t = eng.provisionalTargets(v);
+  $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g. The app replaces this with your measured expenditure once it has a week of data.`;
+}
+["input", "change"].forEach(ev => $("#setup-form").addEventListener(ev, setupPreview));
+function openSetup() {
+  const f = $("#setup-form"), s = state.settings;
+  f.units.value = unit(); f.sex.value = s.sex || "male"; f.age.value = s.age || ""; f.height_cm.value = s.height_cm || "";
+  f.weight.value = state.data?.body ? fmt(toUnit(state.data.body.weight), 1) : ""; f.gemini_key.value = s.gemini_key || "";
+  $$("#setup-activity .opt").forEach(b => b.classList.toggle("on", b.dataset.v === (s.activity || "desk")));
+  $$("#setup-goal .opt").forEach(b => b.classList.toggle("on", b.dataset.v === (s.goal || "recomp")));
+  setupPreview(); $("#setup").showModal();
+}
+$("#setup-skip").onclick = async () => { await db.setSetting("setup_done", "1"); $("#setup").close(); await loadDay(); };
+$("#setup-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const v = setupVals(); if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) return toast("Age, height and weight, please");
+  const t = eng.provisionalTargets(v);
+  const put = { units: v.units, sex: v.sex, age: v.age, height_cm: v.height_cm, activity: v.activity, goal: v.goal, setup_done: "1",
+    provisional_kcal: t.provisional_kcal, recomp_deficit_kcal: t.recomp_deficit_kcal, protein_floor_g: t.protein_floor_g, protein_ceiling_g: t.protein_ceiling_g,
+    weight_lo_kg: t.weight_lo_kg ?? "", weight_hi_kg: t.weight_hi_kg ?? "" };
+  for (const [k, val] of Object.entries(put)) await db.setSetting(k, val);
+  if (v.gemini_key) await db.setSetting("gemini_key", v.gemini_key);
+  const at = atFor(nowHM());   // the weight typed here is the first weigh-in
+  if (!state.all?.body?.some(b => b.day === todayStr())) await db.add("body", { day: at.slice(0, 10), at, weight_kg: Math.round(v.weight_kg * 100) / 100, bodyfat_pct: null, muscle_kg: null, water_pct: null, source: "manual", ext_id: `manual:${at}:${Date.now()}` });
+  $("#setup").close(); toast(`Set: ${fmt(t.provisional_kcal)} kcal rest-day base, protein ${t.protein_floor_g}–${t.protein_ceiling_g} g`, 4000); await changed();
 };
 
 // ------------------------------------------------------------ tabs / boot
@@ -809,6 +920,17 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
       await db.setSetting("relabel_v1", "1"); if (n) { await loadDay(); await markDirty(); }
     }
     if (RETIRED_MODELS.includes(state.settings.ai_model)) { await db.setSetting("ai_model", DEFAULT_MODEL); state.settings.ai_model = DEFAULT_MODEL; }
+    if ((await db.setting("kinds_v1")) !== "1") {                 // a phone set up before kinds were the person's own keeps its REVL classes
+      const s0 = state.settings;
+      if (s0.burn_revl_move || s0.burn_revl_sweat || s0.burn_revl_perform) {
+        await db.setSetting("workout_kinds", JSON.stringify([{ key: "revl_move", label: "REVL Move" }, { key: "revl_sweat", label: "REVL Sweat" }, { key: "revl_perform", label: "REVL Perform" }, { key: "run", label: "Run" }, { key: "swim", label: "Swim" }, { key: "lift", label: "Strength" }]));
+      }
+      await db.setSetting("kinds_v1", "1"); await loadDay();
+    }
+    if (state.settings.setup_done !== "1") {
+      if (state.all.meals.length || state.all.body.length) await db.setSetting("setup_done", "1");   // an existing phone already has its targets
+      else openSetup();
+    }
     retryPending({ force: true });
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo) {

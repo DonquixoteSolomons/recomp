@@ -85,8 +85,10 @@ export const DEFAULT_SETTINGS = {
   protein_floor_g: "120", protein_ceiling_g: "150",
   weight_lo_kg: "", weight_hi_kg: "",              // empty = no bounds
   provisional_kcal: "2000", recomp_deficit_kcal: "250",   // provisional = rest-day base; sessions add on top
-  burn_revl_move: "450", burn_revl_sweat: "500", burn_revl_perform: "350",
-  burn_run: "300", burn_swim: "250", burn_calves: "80", burn_lift: "250", burn_other: "200",
+  // workout kinds are the person's own (Settings); these are the generic starting set and their default burns
+  workout_kinds: JSON.stringify([{ key: "class", label: "Class" }, { key: "run", label: "Run" }, { key: "cycle", label: "Cycle" }, { key: "swim", label: "Swim" }, { key: "walk", label: "Walk" }, { key: "lift", label: "Strength" }]),
+  burn_class: "400", burn_run: "300", burn_cycle: "350", burn_swim: "250", burn_walk: "150", burn_lift: "250", burn_other: "200",
+  units: "kg",
   creatine_start: "", creatine_settle_days: "28",  // empty = no creatine window
   ai_model: "gemini-3.6-flash",
   gh_repo: "", backup_auto: "1",

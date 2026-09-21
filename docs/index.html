@@ -36,6 +36,8 @@
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
     <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13h6l-1 8 9-11h-6Z"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><path d="M8 9v6M11 9v6M13.5 9v6M16 9v6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v6h14v-6"/></symbol>
   </defs>
 </svg>
 
@@ -108,7 +110,7 @@
     <details>
       <summary>Weigh in by hand</summary>
       <div class="row gap top">
-        <label class="lbl">kg <input class="num" id="bw-kg" type="number" min="30" max="200" step="0.05" inputmode="decimal"></label>
+        <label class="lbl"><span id="bw-unit">kg</span> <input class="num" id="bw-kg" type="number" min="30" max="200" step="0.05" inputmode="decimal"></label>
         <label class="lbl">body fat % <input class="num" id="bw-bf" type="number" min="3" max="60" step="0.1" inputmode="decimal"></label>
         <button class="btn" id="bw-log">Log</button>
       </div>
@@ -116,11 +118,12 @@
     </details>
     <details>
       <summary>Backups</summary>
-      <p class="note top">Backups happen on their own after every change. These are for a new phone or a manual copy.</p>
+      <p class="note top">With a GitHub repo set, backups happen on their own after every change. Without one, <b>Save a copy</b> sends the full backup to Drive, WhatsApp or a file — do it now and then; the CSV opens in any spreadsheet.</p>
       <div class="row gap wrap">
         <button class="btn" id="btn-backup">Back up now</button>
         <button class="btn" id="btn-restore">Restore from GitHub</button>
-        <button class="btn" id="btn-export">Export file</button>
+        <button class="btn" id="btn-export"><svg><use href="#i-share"/></svg>Save a copy</button>
+        <button class="btn" id="btn-csv">Export CSV</button>
         <label class="btn filebtn"><input type="file" id="import-file" accept="application/json" hidden>Import file</label>
       </div>
     </details>
@@ -148,7 +151,7 @@
     <div class="photo-row">
       <label class="btn tile"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden><svg><use href="#i-camera"/></svg>Camera</label>
       <label class="btn tile"><input type="file" id="est-gallery" accept="image/*" multiple hidden><svg><use href="#i-image"/></svg>Gallery</label>
-      <label class="btn tile"><input type="file" id="est-label" accept="image/*" hidden><svg><use href="#i-tag"/></svg>Label</label>
+      <label class="btn tile"><input type="file" id="est-label" accept="image/*" capture="environment" hidden><svg><use href="#i-scan"/></svg>Scan</label>
     </div>
     <div class="thumbs" id="est-thumbs"></div>
     <textarea id="est-text" class="text" rows="3" placeholder="What is it, where from, what you shared or skipped — “ayam penyet from Amigos, didn't finish the rice”"></textarea>
@@ -198,14 +201,7 @@
 <dialog class="sheet" id="sheet-workout">
   <div class="sheet-head"><span class="grip"></span><h2>Workout</h2><button class="icon close" data-close aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
   <div class="sheet-body">
-    <div class="options" id="wo-kinds">
-      <button class="opt" data-kind="revl_move">REVL Move</button>
-      <button class="opt" data-kind="revl_sweat">REVL Sweat</button>
-      <button class="opt" data-kind="revl_perform">REVL Perform</button>
-      <button class="opt" data-kind="run">Run</button>
-      <button class="opt" data-kind="swim">Swim</button>
-      <button class="opt" data-kind="lift">Strength</button>
-    </div>
+    <div class="options" id="wo-kinds"></div>
     <div id="wo-cardio" class="stack">
       <div class="row gap">
         <label class="lbl">minutes <input class="num" id="wo-min" type="number" min="0" step="1" inputmode="decimal"></label>
@@ -244,7 +240,7 @@
   <form method="dialog" class="form" id="product-form">
     <h2>New tub or carton</h2>
     <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" hidden><svg><use href="#i-tag"/></svg>Read the label</label>
+      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" capture="environment" hidden><svg><use href="#i-scan"/></svg>Scan barcode or label</label>
       <span class="status" id="prod-status"></span>
     </div>
     <p class="note">Or type it: milks per 100 ml; whey per gram of powder — 25 g protein in a 32 g scoop is 0.78 per g.</p>
@@ -265,8 +261,53 @@
 <dialog class="sheet" id="settings">
   <form method="dialog" id="settings-form">
     <div class="sheet-head"><span class="grip"></span><h2>Settings</h2><button class="icon close" value="cancel" formnovalidate aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
-    <div class="sheet-body"><div class="grid2" id="settings-fields"></div></div>
+    <div class="sheet-body">
+      <div class="grid2" id="settings-fields"></div>
+      <div class="card-head"><h3>Workout kinds</h3><span class="muted">default kcal when none is given</span></div>
+      <div id="kinds-editor" class="stack"></div>
+      <button class="btn ghost" type="button" id="btn-addkind"><svg><use href="#i-plus"/></svg>Add a workout kind</button>
+      <div class="row gap wrap"><button class="btn" type="button" id="btn-setup">Redo setup</button></div>
+      <details><summary>About this app</summary>
+        <p class="note top">No account, no ads, no subscription, nothing to unlock. Your data lives on this phone (and in your own GitHub repo if you set one). Export it any time as a file or CSV. Photo estimates use your own free Gemini key; barcodes use Open Food Facts, an open database that needs no key.</p>
+      </details>
+    </div>
     <div class="sheet-foot"><button class="btn primary block" value="save">Save</button></div>
+  </form>
+</dialog>
+
+<!-- ============================================================ SETUP (first run) -->
+<dialog class="sheet" id="setup">
+  <form id="setup-form">
+    <div class="sheet-head"><span class="grip"></span><h2>Set up</h2></div>
+    <div class="sheet-body">
+      <p class="note">A minute of facts gives you a first-week target. After about seven logged days with weigh-ins, the app measures your real expenditure from your own numbers and takes over.</p>
+      <div class="row gap">
+        <label class="lbl">units <select class="select" name="units"><option value="kg">kg · cm</option><option value="lb">lb · cm</option></select></label>
+        <label class="lbl">sex <select class="select" name="sex"><option value="male">Male</option><option value="female">Female</option></select></label>
+      </div>
+      <div class="row gap">
+        <label class="lbl">age <input class="num" name="age" type="number" min="14" max="100" step="1" required inputmode="numeric"></label>
+        <label class="lbl">height cm <input class="num" name="height_cm" type="number" min="120" max="230" step="1" required inputmode="numeric"></label>
+        <label class="lbl">weight <span id="setup-unit">kg</span> <input class="num" name="weight" type="number" min="30" max="500" step="0.1" required inputmode="decimal"></label>
+      </div>
+      <span class="label">Your day, outside training</span>
+      <div class="options" id="setup-activity">
+        <button type="button" class="opt on" data-v="desk">Mostly sitting</button>
+        <button type="button" class="opt" data-v="mixed">Mixed</button>
+        <button type="button" class="opt" data-v="feet">On my feet</button>
+      </div>
+      <span class="label">Goal</span>
+      <div class="options" id="setup-goal">
+        <button type="button" class="opt on" data-v="recomp">Recomp — same weight, less fat</button>
+        <button type="button" class="opt" data-v="cut">Lose fat</button>
+        <button type="button" class="opt" data-v="maintain">Maintain</button>
+        <button type="button" class="opt" data-v="gain">Gain</button>
+      </div>
+      <label class="lbl wide">Gemini API key — free, optional, for photo estimates <input class="num" name="gemini_key" type="password" autocomplete="off" placeholder="paste it here or add it later in Settings"></label>
+      <p class="note">Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a>. Without it, barcodes, regulars, shakes and typed entries still work.</p>
+      <p class="note" id="setup-preview"></p>
+    </div>
+    <div class="sheet-foot"><button class="btn ghost" type="button" id="setup-skip">Later</button><button class="btn primary" type="submit">Start</button></div>
   </form>
 </dialog>
 
