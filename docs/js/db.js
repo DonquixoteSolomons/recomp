@@ -104,6 +104,7 @@ export async function dump() {
   for (const s of Object.keys(STORES)) {
     out[s] = await all(s);
     if (s === "estimates") out[s] = out[s].map(({ thumb, images, ...rest }) => rest);   // thumbnails and parked photos stay on the phone
+    if (s === "meals") out[s] = out[s].map(m => m.detail && typeof m.detail === "object" && m.detail.thumb ? { ...m, detail: { ...m.detail, thumb: undefined } } : m);
     if (s === "settings") out[s] = out[s].filter(r => !CREDENTIAL_KEYS.includes(r.key));
   }
   return out;

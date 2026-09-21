@@ -6,7 +6,8 @@ import * as db from "./db.js";
 
 const API = "https://api.github.com";
 
-const utf8ToB64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+// chunked: spreading a large byte array into fromCharCode overflows the call stack once a backup passes ~100 KB
+const utf8ToB64 = (s) => { const bytes = new TextEncoder().encode(s); let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin); };
 const b64ToUtf8 = (b) => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\n/g, "")), c => c.charCodeAt(0)));
 
 async function creds() {

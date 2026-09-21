@@ -131,9 +131,11 @@ function render() {
   const chip = $("#weight-chip");
   if (d.body) {
     chip.hidden = false; chip.classList.toggle("oob", !!d.body.out_of_bounds);
-    const when = d.body.day === todayStr() ? "today" : d.body.day.slice(5).replace("-", "/");
-    chip.querySelector("b").textContent = `${fmt(d.body.weight, 2)} kg`;
-    chip.querySelector("small").textContent = (d.body.bodyfat != null ? `${fmt(d.body.bodyfat, 1)}% · ` : "") + when;
+    // one short line: "74.9 kg · 25.9%" today, or the date instead of the fat when the reading is older
+    const stale = d.body.day !== todayStr();
+    chip.querySelector("b").textContent = `${fmt(d.body.weight, 1)} kg`;
+    chip.querySelector("small").textContent = stale ? d.body.day.slice(5).replace("-", "/") : (d.body.bodyfat != null ? `${fmt(d.body.bodyfat, 1)}%` : "");
+    chip.title = `${fmt(d.body.weight, 2)} kg${d.body.bodyfat != null ? ` · ${fmt(d.body.bodyfat, 1)}% fat` : ""} · ${stale ? d.body.day : "today"}`;
     chip.onclick = () => showTab("trend");
   } else chip.hidden = true;
 
@@ -336,7 +338,7 @@ async function parkEstimate(text, err) {
     if (m) await db.put("meals", { ...m, needs_review: 1 });
   } else {
     at = atFor();
-    mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: 0, lo: 0, hi: 0, protein: 0, source: "pending", share: state.share, needs_review: 1, detail: { raw: text, thumb } });
+    mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: 0, lo: 0, hi: 0, protein: 0, source: "pending", share: state.share, needs_review: 1, detail: { raw: text } });
   }
   await db.add("estimates", { day: at.slice(0, 10), at, text, share: state.share, status: "pending", images, thumb, meal_id: mealId, attempts: 1, last_error: err.message,
     model: null, ident: null, result: null, usage: null, parent_id: null });
