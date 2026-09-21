@@ -220,7 +220,7 @@ const LABEL_SCHEMA = { type: "OBJECT", properties: {
   product: { type: "STRING", description: "brand and product name as printed" },
   kind: { type: "STRING", enum: ["milk", "whey", "food", "drink"] },
   basis: { type: "STRING", enum: ["100ml", "100g", "serving"], description: "what the kcal/protein numbers below are per" },
-  serving_size: { type: "STRING", description: "as printed, e.g. '32 g (1 scoop)', '350 ml'" },
+  serving_size: { type: "STRING", description: "the printed serving in English, ALWAYS with its weight or volume when the panel prints one, e.g. '1 slice (21 g)', '32 g (1 scoop)', '350 ml'. Translate units: กรัม/克/グラム = g, มล./毫升 = ml" },
   serving_g_or_ml: { type: "NUMBER", nullable: true },
   kcal: { type: "NUMBER" }, protein_g: { type: "NUMBER" },
   servings_per_pack: { type: "NUMBER", nullable: true },
@@ -230,7 +230,7 @@ const LABEL_SCHEMA = { type: "OBJECT", properties: {
 /** Read a nutrition label. Returns per-100ml/100g values when printed, else per serving. */
 export async function readLabel({ apiKey, model = DEFAULT_MODEL, image, onStatus }) {
   return extract(apiKey, model, image,
-    "This is a food or drink package. Read the nutrition information panel exactly as printed. Prefer the per-100 ml or per-100 g column when it exists; otherwise give per-serving values and the serving size. Energy in kcal (convert from kJ if only kJ is printed: kJ / 4.184). If it is a milk, kind=milk; a protein powder, kind=whey; otherwise food or drink.",
+    "This is a food or drink package. Read the nutrition information panel exactly as printed, in any language or script (Thai, Chinese, Malay, Japanese...). Prefer the per-100 ml or per-100 g column when it exists; otherwise give per-serving values and the serving size. The serving weight in g or ml is important: put it in serving_g_or_ml and in serving_size whenever the panel prints it, e.g. 'หนึ่งหน่วยบริโภค: 1 แผ่น (21 กรัม)' → serving_size '1 slice (21 g)', serving_g_or_ml 21. Energy in kcal (convert from kJ if only kJ is printed: kJ / 4.184). If it is a milk, kind=milk; a protein powder, kind=whey; otherwise food or drink.",
     LABEL_SCHEMA, onStatus);
 }
 

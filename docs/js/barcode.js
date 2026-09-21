@@ -66,25 +66,48 @@ const TYPICAL = [
   [/yog(h)?urt|pudding|dessert/i, "cup", null],
   [/\bbar\b/i, "bar", null],
 ];
-const NOUNS = /(\d+(?:[.,]\d+)?)\s*(slices?|pieces?|cans?|bars?|cups?|eggs?|biscuits?|cookies?|crackers?|packs?|packets?|bottles?|sachets?|scoops?|tablets?|squares?|sticks?|wraps?|patties|patty|nuggets?)\b/i;
+const NOUNS = /(\d+(?:[.,]\d+)?)\s*(slices?|pieces?|cans?|bars?|cups?|eggs?|biscuits?|cookies?|crackers?|packs?|packets?|bottles?|sachets?|scoops?|tablets?|squares?|sticks?|wraps?|patties|patty|nuggets?|servings?)\b/i;
+/* Serving text as printed on packs sold here comes in Thai, Chinese, Malay, Japanese as often as
+   English, and the model does not always translate it. Units and unit nouns are mapped to English
+   before parsing, so "1 แผ่น (21 กรัม)" reads as "1 slice (21 g)". */
+const WORDS = [
+  [/กรัม|กรัม\.|กก\.?|克|公克|グラム|\bgrams?\b|\bgramm?\b|\bgramos\b|\bgm\b|\bgr\b/gi, "g"],
+  [/มล\.?|มิลลิลิตร|毫升|ミリリットル|\bmillilit(?:re|er)s?\b|\bcc\b/gi, "ml"],
+  [/แผ่น|片|枚|\bkeping\b|\bhirisan\b|\btranche\b|\brebanada\b/gi, "slice"],
+  [/ชิ้น|块|塊|个|個|\bbiji\b|\bketul\b|\bpcs?\b|\bpièce\b|\bstück\b/gi, "piece"],
+  [/กระป๋อง|罐|缶|\btin\b|\blata\b|\bdose\b/gi, "can"],
+  [/ขวด|瓶|本|\bbotol\b|\bbotella\b|\bflasche\b/gi, "bottle"],
+  [/ถ้วย|杯|カップ|\bcawan\b|\btaza\b|\bbecher\b/gi, "cup"],
+  [/ซอง|包|袋|\bpaket\b|\bbungkus\b|\bsachet\b|\bpeket\b/gi, "pack"],
+  [/ฟอง|\bbiji telur\b|\bhuevos?\b|\beier\b|\bei\b/gi, "egg"],
+  [/แท่ง|条|條|\bbatang\b|\bbarra\b|\briegel\b/gi, "bar"],
+  [/ช้อน(?:โต๊ะ)?|勺|\bsudu\b|\bscoops?\b/gi, "scoop"],
+  [/หน่วยบริโภค|份|人份|\bhidangan\b|\bsajian\b|\bporción\b|\bportion\b/gi, "serving"],
+];
+export const normalizeServing = (s) => WORDS.reduce((t, [re, w]) => t.replace(re, w), String(s || "")).replace(/\s+/g, " ").trim();
+
 export function unitFor(L) {
   const num = (v) => parseFloat(String(v).replace(",", "."));
-  const ss = String(L?.serving_size || ""), name = String(L?.product || "");
+  const ss = normalizeServing(L?.serving_size), name = String(L?.product || "");
   const grams = ss.match(/(\d+(?:[.,]\d+)?)\s*(g|ml)\b/i), noun = ss.match(NOUNS);
   const frac = ss.match(/(\d+)\s*\/\s*(\d+)\s*(can|pack|packet|bottle|bar|cup|loaf|tub|jar|box|tin)\b/i);
   const qty = String(L?.quantity || "").match(/(\d+(?:[.,]\d+)?)\s*(kg|g|ml|l)\b/i);
   const packG = qty ? num(qty[1]) * (/^(kg|l)$/i.test(qty[2]) ? 1000 : 1) : null;
   const servG = grams ? num(grams[1]) : (Number(L?.serving_g_or_ml) > 0 ? Number(L.serving_g_or_ml) : null);
   const one = (w) => w.toLowerCase().replace(/ies$/, "y").replace(/s$/, "");
-  if (frac && servG) return { name: frac[3].toLowerCase(), grams: Math.round(servG * num(frac[2]) / num(frac[1])), source: "pack", step: 0.25, printed: ss };
-  if (noun && servG && num(noun[1]) > 0) return { name: one(noun[2]), grams: Math.round(servG / num(noun[1]) * 10) / 10, source: "pack", step: 1, printed: ss };
+  // perServing: how many of the unit make one printed serving ("2 slices (57 g)" → 2), so per-serving numbers scale by count / perServing
+  if (frac && servG) return { name: frac[3].toLowerCase(), grams: Math.round(servG * num(frac[2]) / num(frac[1])), perServing: num(frac[1]) / num(frac[2]), source: "pack", step: 0.25, printed: ss };
+  if (noun && servG && num(noun[1]) > 0) return { name: one(noun[2]), grams: Math.round(servG / num(noun[1]) * 10) / 10, perServing: num(noun[1]), source: "pack", step: 1, printed: ss };
+  // "1 slice" with no weight printed is still a unit when the numbers are per serving: a slice is a serving
+  if (noun && !servG && num(noun[1]) > 0 && L?.basis === "serving") return { name: one(noun[2]), grams: null, perServing: num(noun[1]), source: "pack", step: 1, printed: ss };
   for (const [re, unit, typical] of TYPICAL) {
     if (!re.test(name)) continue;
     if (typical == null) { if (packG && packG <= 600) return { name: unit, grams: packG, source: "pack", step: 0.25, printed: ss }; continue; }
-    return { name: unit, grams: typical, source: "typical", step: 1, printed: ss };
+    return { name: unit, grams: typical, perServing: null, source: "typical", step: 1, printed: ss };
   }
-  if (servG) return { name: "serving", grams: servG, source: "pack", step: 0.5, printed: ss };
-  if (packG && packG <= 300) return { name: "pack", grams: packG, source: "pack", step: 0.25, printed: ss };
+  if (servG) return { name: "serving", grams: servG, perServing: 1, source: "pack", step: 0.5, printed: ss };
+  if (L?.basis === "serving") return { name: "serving", grams: null, perServing: 1, source: "pack", step: 0.5, printed: ss };
+  if (packG && packG <= 300) return { name: "pack", grams: packG, perServing: null, source: "pack", step: 0.25, printed: ss };
   return null;   // grams only
 }
 

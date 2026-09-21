@@ -1,7 +1,7 @@
 // Open Food Facts parsing and lookup. fetch is mocked; no network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseOff, lookupBarcode, detectBarcode, unitFor } from "../js/barcode.js";
+import { parseOff, lookupBarcode, detectBarcode, unitFor, normalizeServing } from "../js/barcode.js";
 
 const nutella = { code: "3017624010701", status: 1, product: { product_name: "Nutella", brands: "Ferrero", quantity: "400 g", serving_size: "15 g", serving_quantity: 15,
   nutriments: { "energy-kcal_100g": 539, "proteins_100g": 6.3, "energy-kcal_serving": 80.9, "proteins_serving": 0.9 } } };
@@ -40,7 +40,7 @@ test("no BarcodeDetector (this runtime) → null, quickly, without throwing", as
 });
 
 test("the unit people count in: from the pack's serving text, a fraction of the pack, or a typical weight", () => {
-  assert.deepEqual(unitFor({ product: "Gardenia Enriched White Bread", serving_size: "2 slices (57 g)", serving_g_or_ml: 57 }), { name: "slice", grams: 28.5, source: "pack", step: 1, printed: "2 slices (57 g)" });
+  assert.deepEqual(unitFor({ product: "Gardenia Enriched White Bread", serving_size: "2 slices (57 g)", serving_g_or_ml: 57 }), { name: "slice", grams: 28.5, perServing: 2, source: "pack", step: 1, printed: "2 slices (57 g)" });
   assert.equal(unitFor({ product: "Anchor Cheddar Cheese Slices", serving_size: "1 slice (21g)" }).grams, 21);
   const can = unitFor({ product: "Ayam Brand Chilli Tuna", serving_size: "40g (1/4 can)", quantity: "160 g" });
   assert.deepEqual([can.name, can.grams, can.step], ["can", 160, 0.25]);
@@ -53,4 +53,23 @@ test("the unit people count in: from the pack's serving text, a fraction of the 
   assert.equal(unitFor({ product: "Whale Tea mango", quantity: "500 ml" }).name, "bottle");
   assert.equal(unitFor({ product: "Mystery paste" }), null);                             // grams only
   assert.equal(unitFor({ product: "Mystery paste", serving_size: "15 g" }).name, "serving");
+});
+
+test("a serving named without a weight is still the unit when the numbers are per serving (the Thai cheese label)", () => {
+  const u = unitFor({ product: "Cheddar Fromage fondu", basis: "serving", serving_size: "1 slice" });
+  assert.deepEqual([u.name, u.grams, u.perServing, u.source], ["slice", null, 1, "pack"]);
+  const two = unitFor({ product: "Gardenia bread", basis: "serving", serving_size: "2 slices" });
+  assert.deepEqual([two.name, two.perServing], ["slice", 2]);                              // each slice is half a serving
+  assert.equal(unitFor({ product: "Mystery", basis: "serving", serving_size: "1 portion" }).name, "serving");   // an unknown noun: the serving itself
+  assert.equal(unitFor({ product: "Cheddar Fromage fondu", basis: "100g", serving_size: "1 slice" }).source, "typical");   // per-100 numbers need a weight
+});
+
+test("serving text in Thai, Chinese, Malay or Japanese reads the same as English", () => {
+  assert.equal(normalizeServing("1 แผ่น (21 กรัม)"), "1 slice (21 g)");
+  const thai = unitFor({ product: "Cheddar Fromage fondu", basis: "serving", serving_size: "1 แผ่น (21 กรัม)" });
+  assert.deepEqual([thai.name, thai.grams, thai.source], ["slice", 21, "pack"]);
+  assert.deepEqual([unitFor({ product: "面包", basis: "100g", serving_size: "2片 (57克)" }).name, unitFor({ product: "面包", basis: "100g", serving_size: "2片 (57克)" }).grams], ["slice", 28.5]);
+  assert.equal(unitFor({ product: "Roti", basis: "100g", serving_size: "1 keping (30 g)" }).grams, 30);
+  assert.equal(unitFor({ product: "Susu", basis: "100ml", serving_size: "1 botol (250 มล.)" }).name, "bottle");
+  assert.equal(unitFor({ product: "Nasi", basis: "serving", serving_size: "1 หน่วยบริโภค (200 กรัม)" }).name, "serving");
 });

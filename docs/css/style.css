@@ -358,6 +358,9 @@ canvas{width:100%;display:block;border-radius:var(--r-s);background:var(--sunken
 .item .name small.warn{color:var(--orange-ink)}
 .item .btn.small{grid-column:1 / -1;justify-self:start;min-height:38px;padding:0 10px;font-size:12px}
 .item .btn.small svg{width:18px;height:18px}
+.item .btn.small.busy{opacity:.6;pointer-events:none}
+.item .cardstatus{grid-column:1 / -1;font-size:12px;color:var(--muted)}
+.item .cardstatus:empty{display:none}
 .item .x{width:36px;height:36px;border-radius:50%;color:var(--faint);display:grid;place-items:center;justify-self:end}
 .item .x svg{width:16px;height:16px}
 .item .x:active{background:var(--red-bg);color:var(--red)}
