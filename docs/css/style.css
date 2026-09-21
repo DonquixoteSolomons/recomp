@@ -359,6 +359,7 @@ canvas{width:100%;display:block;border-radius:var(--r-s);background:var(--sunken
 .item .x svg{width:16px;height:16px}
 .item .x:active{background:var(--red-bg);color:var(--red)}
 .item .qty{grid-column:1 / -1;display:grid;grid-template-columns:auto 1fr 1fr auto;gap:8px;align-items:center}
+.item .qty.g-only{grid-template-columns:1fr}
 .item .qty .step{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);border-bottom-width:4px;display:grid;place-items:center;font-size:20px;font-weight:900;color:var(--blue-ink)}
 .item .qty .step:active{transform:translateY(2px);border-bottom-width:2px}
 .item .qty .lbl{font-size:11px}

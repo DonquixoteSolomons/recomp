@@ -5,7 +5,7 @@ import { DEFAULT_PRODUCTS, shake, recentFoods, normFoodLabel, EXERCISES, e1rm, l
 import * as eng from "./engine.js";
 import { estimate as runGemini, readLabel, readWorkout, prepareImage, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
-import { detectBarcode, lookupBarcode } from "./barcode.js";
+import { detectBarcode, lookupBarcode, unitFor } from "./barcode.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -288,52 +288,63 @@ $("#meal-foot").onclick = (e) => {
 };
 $("#est-text").addEventListener("input", setMealFoot);
 
-// ---- items: scanned packages, each with its own quantity, logged as their own rows
+// ---- items: scanned packages, each counted in the unit a person thinks in (slices, cans, eggs …)
+//      it.unit = { name, grams, source: "pack" | "typical", step } or null (grams only); it.count in units; it.grams overrides
+const itemGrams = (it) => it.grams ?? (it.unit ? it.count * it.unit.grams : null);
 const itemLine = (it) => {
-  const perServing = it.basis === "serving";
-  const g = it.grams ?? (it.serving_g_or_ml ? it.servings * it.serving_g_or_ml : null);
-  const mult = perServing ? it.servings : (g ?? 0) / 100;
-  return { kcal: it.kcal * mult, protein: it.protein_g * mult, grams: g, servings: it.servings };
+  const g = itemGrams(it);
+  let mult;
+  if (it.basis === "serving") mult = it.serving_g_or_ml && g != null ? g / it.serving_g_or_ml : it.count;   // kcal is per serving
+  else mult = (g ?? 0) / 100;                                                                            // kcal is per 100 g / ml
+  return { kcal: it.kcal * mult, protein: it.protein_g * mult, grams: g, count: it.count };
 };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : (w === "patty" ? "patties" : "s")}`;
+function unitMeta(it) {
+  const u = it.unit, ml = it.basis === "100ml", per = it.basis === "serving" ? `serving${it.serving_size ? ` (${it.serving_size})` : ""}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g` : `per 100 ${ml ? "ml" : "g"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g`;
+  if (!u) return `${per} · no serving size on record — type the ${ml ? "ml" : "grams"}`;
+  if (u.source === "typical") return `${per} · 1 ${u.name} ≈ ${u.grams} g (typical — nothing on record${u.printed ? `; the pack says a serving is ${u.printed}` : ""})`;
+  return `${per} · 1 ${u.name} = ${fmt(u.grams, u.grams % 1 ? 1 : 0)} ${ml ? "ml" : "g"}${u.printed && !/^\d+(?:[.,]\d+)?\s*(g|ml)$/i.test(u.printed.trim()) ? ` (pack: ${u.printed})` : ""}`;
+}
 function renderItems() {
   const box = $("#items"); box.innerHTML = "";
   state.items.forEach((it, i) => {
-    const { kcal, protein, grams } = itemLine(it), perServing = it.basis === "serving", ml = it.basis === "100ml";
-    const meta = [it.via === "barcode" ? "Open Food Facts" : "label", perServing ? `serving ${it.serving_size || "1"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g`
-      : `per 100 ${ml ? "ml" : "g"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g${it.serving_g_or_ml ? ` · serving ${it.serving_g_or_ml} ${ml ? "ml" : "g"}` : ""}`].join(" · ");
+    const { kcal, protein, grams } = itemLine(it), u = it.unit, ml = it.basis === "100ml";
     const el = document.createElement("div"); el.className = "item";
-    el.innerHTML = `<div class="name">${esc(it.product)}<small>${esc(meta)}</small></div><button class="x" aria-label="Remove">${icon("close")}</button>
-      <div class="qty">
-        <button class="step" data-d="-1" aria-label="Fewer">−</button>
-        <label class="lbl">servings <input class="num" data-f="servings" type="number" min="0" step="0.5" value="${it.servings}" inputmode="decimal"></label>
-        <label class="lbl">${ml ? "ml" : "g"} <input class="num" data-f="grams" type="number" min="0" step="any" value="${grams != null ? fmt(grams, 0).replace(/,/g, "") : ""}" inputmode="decimal" ${perServing && !it.serving_g_or_ml ? "disabled" : ""}></label>
-        <button class="step" data-d="1" aria-label="More">+</button>
+    el.innerHTML = `<div class="name">${esc(it.product)}<small>${esc((it.via === "barcode" ? "Open Food Facts · " : "label · ") + unitMeta(it))}</small></div><button class="x" aria-label="Remove">${icon("close")}</button>
+      <div class="qty${u ? "" : " g-only"}">
+        ${u ? `<button class="step" data-d="-1" aria-label="Fewer">−</button>
+        <label class="lbl">${esc(u.name)}s <input class="num" data-f="count" type="number" min="0" step="${u.step}" value="${it.count}" inputmode="decimal"></label>` : ""}
+        <label class="lbl">${ml ? "ml" : "g"} <input class="num" data-f="grams" type="number" min="0" step="any" value="${grams != null ? Math.round(grams) : ""}" inputmode="decimal" placeholder="${u ? "" : "how much?"}"></label>
+        ${u ? `<button class="step" data-d="1" aria-label="More">+</button>` : ""}
       </div>
       <div class="out"><span class="p">${fmt(protein, 1)} g</span> · ${fmt(kcal)} kcal</div>`;
     el.querySelector(".x").onclick = () => { state.items.splice(i, 1); renderItems(); setMealFoot(); };
-    el.querySelectorAll(".step").forEach(b => b.onclick = () => { const d = Number(b.dataset.d), stepBy = it.servings < 1 || (it.servings === 1 && d < 0) ? 0.5 : 1; it.servings = Math.max(0, Math.round((it.servings + d * stepBy) * 2) / 2); it.grams = null; renderItems(); });
-    el.querySelector('[data-f="servings"]').addEventListener("input", (ev) => { it.servings = parseFloat(ev.target.value) || 0; it.grams = null; refreshItem(el, it); });
-    el.querySelector('[data-f="grams"]').addEventListener("input", (ev) => { const g = parseFloat(ev.target.value); it.grams = Number.isFinite(g) ? g : null; if (it.serving_g_or_ml && it.grams != null) it.servings = Math.round(it.grams / it.serving_g_or_ml * 100) / 100; refreshItem(el, it); });
+    el.querySelectorAll(".step").forEach(b => b.onclick = () => { const d = Number(b.dataset.d), st = u.step; it.count = Math.max(0, Math.round((it.count + d * st) / st) * st); it.grams = null; renderItems(); });
+    el.querySelector('[data-f="count"]')?.addEventListener("input", (ev) => { it.count = parseFloat(ev.target.value) || 0; it.grams = null; refreshItem(el, it); });
+    el.querySelector('[data-f="grams"]').addEventListener("input", (ev) => { const g = parseFloat(ev.target.value); it.grams = Number.isFinite(g) ? g : null; if (u && it.grams != null) it.count = Math.round(it.grams / u.grams * 100) / 100; refreshItem(el, it); });
+    if (!u) el.querySelector('[data-f="grams"]').focus();
     box.appendChild(el);
   });
 }
 function refreshItem(el, it) {   // live numbers without re-rendering the input the person is typing in
-  const { kcal, protein, grams, servings } = itemLine(it);
+  const { kcal, protein, grams, count } = itemLine(it);
   el.querySelector(".out").innerHTML = `<span class="p">${fmt(protein, 1)} g</span> · ${fmt(kcal)} kcal`;
-  const sv = el.querySelector('[data-f="servings"]'), gr = el.querySelector('[data-f="grams"]');
-  if (document.activeElement !== sv) sv.value = servings; if (document.activeElement !== gr && grams != null) gr.value = fmt(grams, 0).replace(/,/g, "");
+  const cv = el.querySelector('[data-f="count"]'), gr = el.querySelector('[data-f="grams"]');
+  if (cv && document.activeElement !== cv) cv.value = count; if (document.activeElement !== gr && grams != null) gr.value = Math.round(grams);
 }
 function addItem(L, via) {
-  state.items.push({ ...L, via, servings: 1, grams: null });
+  const unit = unitFor(L);
+  state.items.push({ ...L, via, unit, count: 1, grams: unit ? null : (L.serving_g_or_ml || null) });
   renderItems(); setMealFoot();
 }
 /** Log every item as its own row, at the same time, so each is editable and learnable on its own. */
 async function addItems({ close = false } = {}) {
   let n = 0;
   for (const it of state.items) {
-    const { kcal, protein, grams, servings } = itemLine(it); if (!(kcal > 0 || protein > 0)) continue;
-    const amount = it.basis === "serving" ? `${servings} serving${servings === 1 ? "" : "s"}` : `${fmt(grams, 0)} ${it.basis === "100ml" ? "ml" : "g"}`;
-    await insertMeal({ label: `${it.product} (${amount})`, kcal, lo: kcal * 0.97, hi: kcal * 1.03, protein, source: it.via, share: 1, detail: { label: it, servings, grams } }); n++;
+    const { kcal, protein, grams, count } = itemLine(it); if (!(kcal > 0 || protein > 0)) continue;
+    const unitPart = it.unit ? plural(count, it.unit.name) : null, gramsPart = grams != null ? `${Math.round(grams)} ${it.basis === "100ml" ? "ml" : "g"}` : null;
+    const amount = [unitPart, unitPart && gramsPart ? gramsPart : (gramsPart || (it.basis === "serving" ? plural(count, "serving") : ""))].filter(Boolean).join(" · ");
+    await insertMeal({ label: `${it.product} (${amount})`, kcal, lo: kcal * 0.97, hi: kcal * 1.03, protein, source: it.via, share: 1, detail: { label: it, count, grams, unit: it.unit } }); n++;
   }
   state.items = []; renderItems();
   if (close) { toast(`Added ${n} item${n === 1 ? "" : "s"}`); resetEstimate(); closeSheets(); changed(); }
