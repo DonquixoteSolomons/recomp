@@ -299,26 +299,46 @@ const itemLine = (it) => {
   return { kcal: it.kcal * mult, protein: it.protein_g * mult, grams: g, count: it.count };
 };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : (w === "patty" ? "patties" : "s")}`;
+/** Two facts, kept apart on purpose: the nutrition (always known, or the item would not exist) and
+    what one unit weighs (from the pack, typical for the kind of food, or not known at all). */
 function unitMeta(it) {
-  const u = it.unit, ml = it.basis === "100ml", per = it.basis === "serving" ? `serving${it.serving_size ? ` (${it.serving_size})` : ""}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g` : `per 100 ${ml ? "ml" : "g"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g`;
-  if (!u) return `${per} · no serving size on record — type the ${ml ? "ml" : "grams"}`;
-  if (u.source === "typical") return `${per} · 1 ${u.name} ≈ ${u.grams} g (typical — nothing on record${u.printed ? `; the pack says a serving is ${u.printed}` : ""})`;
-  return `${per} · 1 ${u.name} = ${fmt(u.grams, u.grams % 1 ? 1 : 0)} ${ml ? "ml" : "g"}${u.printed && !/^\d+(?:[.,]\d+)?\s*(g|ml)$/i.test(u.printed.trim()) ? ` (pack: ${u.printed})` : ""}`;
+  const u = it.unit, ml = it.basis === "100ml", src = it.via === "barcode" ? "Open Food Facts" : "the label";
+  const per = it.basis === "serving" ? `Per serving${it.serving_size ? ` (${it.serving_size})` : ""}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g protein — ${src}`
+                                     : `Per 100 ${ml ? "ml" : "g"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g protein — ${src}`;
+  const unitLine = !u ? `Serving size not on record — type the ${ml ? "ml" : "grams"}, or read the pack's label.`
+    : u.source === "typical" ? `1 ${u.name} ≈ ${u.grams} g is a typical weight; the pack's serving size isn't on record${u.printed ? ` (it lists ${u.printed} without saying how many)` : ""} — read the label to use the real one.`
+    : `1 ${u.name} = ${fmt(u.grams, u.grams % 1 ? 1 : 0)} ${ml ? "ml" : "g"}${u.printed && !/^\d+(?:[.,]\d+)?\s*(g|ml)$/i.test(u.printed.trim()) ? ` (pack: ${u.printed})` : ""}`;
+  return { per, unitLine, uncertain: !u || u.source === "typical" };
 }
 function renderItems() {
   const box = $("#items"); box.innerHTML = "";
   state.items.forEach((it, i) => {
     const { kcal, protein, grams } = itemLine(it), u = it.unit, ml = it.basis === "100ml";
     const el = document.createElement("div"); el.className = "item";
-    el.innerHTML = `<div class="name">${esc(it.product)}<small>${esc((it.via === "barcode" ? "Open Food Facts · " : "label · ") + unitMeta(it))}</small></div><button class="x" aria-label="Remove">${icon("close")}</button>
+    const meta = unitMeta(it);
+    el.innerHTML = `<div class="name">${esc(it.product)}<small>${esc(meta.per)}</small><small class="${meta.uncertain ? "warn" : ""}">${esc(meta.unitLine)}</small></div><button class="x" aria-label="Remove">${icon("close")}</button>
       <div class="qty${u ? "" : " g-only"}">
         ${u ? `<button class="step" data-d="-1" aria-label="Fewer">−</button>
         <label class="lbl">${esc(u.name)}s <input class="num" data-f="count" type="number" min="0" step="${u.step}" value="${it.count}" inputmode="decimal"></label>` : ""}
         <label class="lbl">${ml ? "ml" : "g"} <input class="num" data-f="grams" type="number" min="0" step="any" value="${grams != null ? Math.round(grams) : ""}" inputmode="decimal" placeholder="${u ? "" : "how much?"}"></label>
         ${u ? `<button class="step" data-d="1" aria-label="More">+</button>` : ""}
       </div>
+      ${meta.uncertain ? `<label class="btn ghost small"><input type="file" accept="image/*" hidden data-f="label"><svg><use href="#i-tag"/></svg>Read the label</label>` : ""}
       <div class="out"><span class="p">${fmt(protein, 1)} g</span> · ${fmt(kcal)} kcal</div>`;
     el.querySelector(".x").onclick = () => { state.items.splice(i, 1); renderItems(); setMealFoot(); };
+    el.querySelector('[data-f="label"]')?.addEventListener("change", async (ev) => {
+      const f = ev.target.files[0]; ev.target.value = ""; if (!f) return;
+      const status = (m) => $("#est-status").textContent = m;
+      try {
+        const { data: L, model } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: f, onStatus: status }));
+        await rememberModel(model);
+        // the pack is the source of truth: its serving size always, its numbers when the panel was read with confidence
+        Object.assign(it, { serving_size: L.serving_size || it.serving_size, serving_g_or_ml: L.serving_g_or_ml || it.serving_g_or_ml, servings_per_pack: L.servings_per_pack ?? it.servings_per_pack });
+        if (L.confidence !== "low" && L.kcal > 0) Object.assign(it, { basis: L.basis, kcal: L.kcal, protein_g: L.protein_g, via: "label" });
+        it.unit = unitFor(it); it.count = 1; it.grams = it.unit ? null : (it.serving_g_or_ml || null);
+        renderItems(); status(`label read · serving ${L.serving_size || "not printed"} · ${L.confidence}`);
+      } catch (err) { status("Couldn't read that label — " + err.message); }
+    });
     el.querySelectorAll(".step").forEach(b => b.onclick = () => { const d = Number(b.dataset.d), st = u.step; it.count = Math.max(0, Math.round((it.count + d * st) / st) * st); it.grams = null; renderItems(); });
     el.querySelector('[data-f="count"]')?.addEventListener("input", (ev) => { it.count = parseFloat(ev.target.value) || 0; it.grams = null; refreshItem(el, it); });
     el.querySelector('[data-f="grams"]').addEventListener("input", (ev) => { const g = parseFloat(ev.target.value); it.grams = Number.isFinite(g) ? g : null; if (u && it.grams != null) it.count = Math.round(it.grams / u.grams * 100) / 100; refreshItem(el, it); });
@@ -358,8 +378,13 @@ async function readPackage(file, onStatus) {
   const code = await detectBarcode(file);
   if (code) {
     onStatus(`barcode ${code} — looking it up…`);
-    try { const L = await lookupBarcode(code); if (L) { const { thumb } = await prepareImage(file); return { data: L, thumb, via: "barcode" }; } onStatus(`${code} is not in Open Food Facts — reading the label…`); }
+    let missing = false;
+    try { const L = await lookupBarcode(code); if (L) { const { thumb } = await prepareImage(file); return { data: L, thumb, via: "barcode" }; } missing = true; onStatus(`${code} isn't in Open Food Facts — trying to read a nutrition panel in this photo…`); }
     catch { onStatus("Open Food Facts didn't answer — reading the label…"); }
+    if (missing) {
+      try { const r = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: file, onStatus })); await rememberModel(r.model); if (r.data.confidence !== "low" && r.data.kcal > 0) return { data: r.data, thumb: r.thumb, via: "label" }; } catch {}
+      throw new Error(`${code} isn't in Open Food Facts. Take a photo of the nutrition panel instead (Scan again).`);
+    }
   } else onStatus("reading label…");
   const { data, thumb, model } = await withModelFallback(() => readLabel({ apiKey: state.settings.gemini_key, model: modelToUse(), image: file, onStatus }));
   await rememberModel(model);

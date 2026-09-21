@@ -140,8 +140,12 @@ open as sheets with the one primary action pinned at the bottom:
   gallery, several at once). Each scanned package becomes an *item* with its
   own servings / grams — a can of tuna, four slices of bread and two of cheese
   are three items with three quantities — and one Add logs them as their own
-  rows. Photos and text go to the model with the packaged items named as
-  already counted, so nothing is counted twice. **Camera**, **Gallery** (pick existing
+  rows. Items are counted in the unit you think in — slices, cans, eggs —
+  from the pack's own serving text, or a typical weight when the base has no
+  serving size (said so on the card, with a **Read the label** button that takes
+  the real serving, and the numbers, from a photo of the panel). Photos and text
+  go to the model with the packaged items named as already counted, so nothing
+  is counted twice. **Camera**, **Gallery** (pick existing
   photos), or **Label** (a nutrition panel → exact values, then how much you
   had). A scan is a barcode (Open Food Facts, no key) with the printed panel
   as the fallback. Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**.
