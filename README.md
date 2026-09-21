@@ -53,7 +53,10 @@ Unstar, *6 calorie tracking apps ranked by 1-star reviews* (2026); Nutrola,
 reviews (Jul–Sep 2026); Bento Bunny on the 2026 MFP redesign; PissedConsumer.
 
 Set-up asks for a minute of facts (units, sex, age, height, weight, activity,
-goal) and derives the first week's targets. Workout kinds are your own
+goal) and derives the first week's targets (protein 2.0–2.2 g/kg for recomp or
+a cut, 1.6–2.0 otherwise; a rest-day base from Mifflin-St Jeor, never below
+resting needs). Targets already on the phone are the person's: redoing setup
+shows both and asks — Keep my targets, or Use suggested. Workout kinds are your own
 (Settings), weight shows in kg or lb, and the log never depends on the AI
 being up — a meal that can't be valued is parked in the log and valued later
 on its own.

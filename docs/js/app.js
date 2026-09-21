@@ -987,11 +987,21 @@ const setupVals = () => {
   return { sex: f.sex.value, age: parseInt(f.age.value, 10), height_cm: parseFloat(f.height_cm.value), weight_kg: lb ? w / 2.20462 : w, units: f.units.value,
     activity: $("#setup-activity .opt.on")?.dataset.v || "desk", goal: $("#setup-goal .opt.on")?.dataset.v || "recomp", gemini_key: f.gemini_key.value.trim() };
 };
+// targets already on this phone (from a previous setup, the seed, or typed in Settings) are the person's; setup proposes, it does not overwrite
+const currentTargets = () => { const s = state.settings, n = (k) => parseFloat(s[k]); return Number.isFinite(n("protein_floor_g")) && Number.isFinite(n("provisional_kcal")) && s.setup_done === "1" ? { floor: n("protein_floor_g"), ceil: n("protein_ceiling_g"), base: n("provisional_kcal") } : null; };
 function setupPreview() {
   const v = setupVals(); $("#setup-unit").textContent = v.units;
-  if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) { $("#setup-preview").textContent = ""; return; }
+  const cur = currentTargets(), keep = $("#setup-keep"), go = $("#setup-go");
+  if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) { $("#setup-preview").textContent = ""; keep.hidden = true; go.textContent = "Start"; return; }
   const t = eng.provisionalTargets(v);
-  $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g. The app replaces this with your measured expenditure once it has a week of data.`;
+  const same = cur && cur.floor === t.protein_floor_g && cur.ceil === t.protein_ceiling_g && cur.base === t.provisional_kcal;
+  if (cur && !same) {
+    $("#setup-preview").textContent = `Your targets now: protein ${fmt(cur.floor)}–${fmt(cur.ceil)} g, ${fmt(cur.base)} kcal rest-day base. Suggested from these facts: protein ${t.protein_floor_g}–${t.protein_ceiling_g} g, ${fmt(t.provisional_kcal)} kcal. Either is a starting guess — the app replaces the calorie base with your measured expenditure once it has a week of data. Keep yours, or use the suggestion.`;
+    keep.hidden = false; go.textContent = "Use suggested";
+  } else {
+    $("#setup-preview").textContent = `First-week target: about ${fmt(t.provisional_kcal)} kcal on a rest day (sessions add on top), protein ${t.protein_floor_g}–${t.protein_ceiling_g} g. The app replaces this with your measured expenditure once it has a week of data.`;
+    keep.hidden = true; go.textContent = "Start";
+  }
 }
 ["input", "change"].forEach(ev => $("#setup-form").addEventListener(ev, setupPreview));
 function openSetup() {
@@ -1003,19 +1013,22 @@ function openSetup() {
   setupPreview(); $("#setup").showModal();
 }
 $("#setup-skip").onclick = async () => { await db.setSetting("setup_done", "1"); $("#setup").close(); await loadDay(); };
-$("#setup-form").onsubmit = async (e) => {
-  e.preventDefault();
+async function finishSetup({ useSuggested }) {
   const v = setupVals(); if (!(v.age > 0 && v.height_cm > 0 && v.weight_kg > 0)) return toast("Age, height and weight, please");
   const t = eng.provisionalTargets(v);
-  const put = { units: v.units, sex: v.sex, age: v.age, height_cm: v.height_cm, activity: v.activity, goal: v.goal, setup_done: "1",
-    provisional_kcal: t.provisional_kcal, recomp_deficit_kcal: t.recomp_deficit_kcal, protein_floor_g: t.protein_floor_g, protein_ceiling_g: t.protein_ceiling_g,
-    weight_lo_kg: t.weight_lo_kg ?? "", weight_hi_kg: t.weight_hi_kg ?? "" };
+  const put = { units: v.units, sex: v.sex, age: v.age, height_cm: v.height_cm, activity: v.activity, goal: v.goal, setup_done: "1" };
+  if (useSuggested) Object.assign(put, { provisional_kcal: t.provisional_kcal, recomp_deficit_kcal: t.recomp_deficit_kcal, protein_floor_g: t.protein_floor_g, protein_ceiling_g: t.protein_ceiling_g,
+    weight_lo_kg: t.weight_lo_kg ?? "", weight_hi_kg: t.weight_hi_kg ?? "" });
   for (const [k, val] of Object.entries(put)) await db.setSetting(k, val);
   if (v.gemini_key) await db.setSetting("gemini_key", v.gemini_key);
-  const at = atFor(nowHM());   // the weight typed here is the first weigh-in
+  const at = atFor(nowHM());   // the weight typed here is a weigh-in when there is none today
   if (!state.all?.body?.some(b => b.day === todayStr())) await db.add("body", { day: at.slice(0, 10), at, weight_kg: Math.round(v.weight_kg * 100) / 100, bodyfat_pct: null, muscle_kg: null, water_pct: null, source: "manual", ext_id: `manual:${at}:${Date.now()}` });
-  $("#setup").close(); toast(`Set: ${fmt(t.provisional_kcal)} kcal rest-day base, protein ${t.protein_floor_g}–${t.protein_ceiling_g} g`, 4000); await changed();
-};
+  $("#setup").close();
+  toast(useSuggested ? `Set: ${fmt(t.provisional_kcal)} kcal rest-day base, protein ${t.protein_floor_g}–${t.protein_ceiling_g} g` : "Profile saved — your targets are unchanged", 4000);
+  await changed();
+}
+$("#setup-form").onsubmit = (e) => { e.preventDefault(); finishSetup({ useSuggested: true }); };
+$("#setup-keep").onclick = () => finishSetup({ useSuggested: false });
 
 // ------------------------------------------------------------ tabs / boot
 $$(".tab").forEach(t => t.onclick = async () => {

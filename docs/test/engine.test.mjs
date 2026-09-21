@@ -251,7 +251,7 @@ test("provisional targets from a few facts, rounded to something a person can ho
   const t = provisionalTargets({ sex: "male", age: 26, height_cm: 169, weight_kg: 75, activity: "desk", goal: "recomp" });
   assert.equal(t.bmr, 1681);                                   // 750 + 1056.25 - 130 + 5
   assert.equal(t.provisional_kcal, 1750);                      // 1681 * 1.2 - 250 = 1767 -> 1750
-  assert.deepEqual([t.protein_floor_g, t.protein_ceiling_g], [135, 165]);   // 1.8-2.2 g/kg
+  assert.deepEqual([t.protein_floor_g, t.protein_ceiling_g], [150, 165]);   // 2.0-2.2 g/kg for recomp
   assert.deepEqual([t.weight_lo_kg, t.weight_hi_kg], [73, 77]);
   const f = provisionalTargets({ sex: "female", age: 40, height_cm: 160, weight_kg: 60, activity: "feet", goal: "gain" });
   assert.equal(f.bmr, 1239); assert.equal(f.provisional_kcal, 2100); assert.deepEqual([f.protein_floor_g, f.protein_ceiling_g], [95, 120]);

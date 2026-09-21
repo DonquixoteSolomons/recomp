@@ -85,7 +85,9 @@ export function provisionalTargets({ sex = "male", age = 30, height_cm = 170, we
   const bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + (sex === "female" ? -161 : 5);
   const factor = { desk: 1.2, mixed: 1.35, feet: 1.5 }[activity] ?? 1.2;
   const adjust = { recomp: -250, cut: -500, maintain: 0, gain: 250 }[goal] ?? -250;
-  const perKg = goal === "recomp" || goal === "cut" ? [1.8, 2.2] : [1.6, 2.0];
+  // benefits plateau near 1.6 g/kg on average; in a deficit or recomp the usual advice is 2.0–2.2, and a
+  // 15 g band is a target, not a physiology lecture — the floor is what matters, over the ceiling is fine
+  const perKg = goal === "recomp" || goal === "cut" ? [2.0, 2.2] : [1.6, 2.0];
   const r5 = (x) => Math.round(x / 5) * 5, r50 = (x) => Math.round(x / 50) * 50;
   return {
     provisional_kcal: Math.max(r50(bmr), r50(bmr * factor + adjust)),   // never below resting needs on a rest day, whatever the goal
