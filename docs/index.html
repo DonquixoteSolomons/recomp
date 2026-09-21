@@ -148,12 +148,13 @@
       <div class="card-head"><h3>Regulars</h3><span class="muted">one tap · eaten 3+ times</span></div>
       <div class="chips" id="recent"></div>
     </div>
-    <div class="photo-row">
-      <label class="btn tile"><input type="file" id="est-camera" accept="image/*" capture="environment" hidden><svg><use href="#i-camera"/></svg>Camera</label>
-      <label class="btn tile"><input type="file" id="est-gallery" accept="image/*" multiple hidden><svg><use href="#i-image"/></svg>Gallery</label>
-      <label class="btn tile"><input type="file" id="est-label" accept="image/*" capture="environment" hidden><svg><use href="#i-scan"/></svg>Scan</label>
+    <!-- no capture attribute: the phone's own chooser offers Camera and Gallery, for both -->
+    <div class="photo-row two">
+      <label class="btn tile"><input type="file" id="est-photo" accept="image/*" multiple hidden><svg><use href="#i-camera"/></svg>Photo of food</label>
+      <label class="btn tile"><input type="file" id="est-label" accept="image/*" multiple hidden><svg><use href="#i-scan"/></svg>Scan packages</label>
     </div>
     <div class="thumbs" id="est-thumbs"></div>
+    <div class="items-list" id="items"></div>
     <textarea id="est-text" class="text" rows="3" placeholder="What is it, where from, what you shared or skipped — “ayam penyet from Amigos, didn't finish the rice”"></textarea>
     <div class="chips" id="recall"></div>
     <div class="share-row">
@@ -241,7 +242,7 @@
   <form method="dialog" class="form" id="product-form">
     <h2>New tub or carton</h2>
     <div class="row gap">
-      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" capture="environment" hidden><svg><use href="#i-scan"/></svg>Scan barcode or label</label>
+      <label class="btn filebtn"><input type="file" id="prod-label" accept="image/*" hidden><svg><use href="#i-scan"/></svg>Scan barcode or label</label>
       <span class="status" id="prod-status"></span>
     </div>
     <p class="note">Or type it: milks per 100 ml; whey per gram of powder — 25 g protein in a 32 g scoop is 0.78 per g.</p>

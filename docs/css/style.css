@@ -201,6 +201,7 @@ details[open]>summary::after{transform:rotate(-135deg)}
 .btn.tile svg{width:28px;height:28px;color:var(--blue-ink)}
 .filebtn{cursor:pointer;white-space:nowrap}
 .photo-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.photo-row.two{grid-template-columns:1fr 1fr}
 
 /* ---------------------------------------------------------------- inputs */
 .select,.num,.text{
@@ -347,3 +348,20 @@ canvas{width:100%;display:block;border-radius:var(--r-s);background:var(--sunken
 .kind-row .x svg{width:16px;height:16px}
 .kind-row .x:active{background:var(--red-bg);color:var(--red)}
 .callout b{color:inherit}
+
+/* meal items: scanned packages, each with its own quantity */
+.items-list{display:flex;flex-direction:column;gap:10px}
+.items-list:empty{display:none}
+.item{border:2px solid var(--line);border-radius:var(--r-s);padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center}
+.item .name{font-size:15px;font-weight:800;line-height:1.2;min-width:0}
+.item .name small{display:block;font-size:12px;color:var(--muted);font-weight:700}
+.item .x{width:36px;height:36px;border-radius:50%;color:var(--faint);display:grid;place-items:center;justify-self:end}
+.item .x svg{width:16px;height:16px}
+.item .x:active{background:var(--red-bg);color:var(--red)}
+.item .qty{grid-column:1 / -1;display:grid;grid-template-columns:auto 1fr 1fr auto;gap:8px;align-items:center}
+.item .qty .step{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);border-bottom-width:4px;display:grid;place-items:center;font-size:20px;font-weight:900;color:var(--blue-ink)}
+.item .qty .step:active{transform:translateY(2px);border-bottom-width:2px}
+.item .qty .lbl{font-size:11px}
+.item .qty .num{min-height:40px;padding:6px 10px}
+.item .out{grid-column:1 / -1;text-align:right;font-size:15px;font-weight:900}
+.item .out .p{color:var(--green-ink)}

@@ -135,9 +135,15 @@ then a week card. The bottom nav is Today, Trend, and the three inputs, which
 open as sheets with the one primary action pinned at the bottom:
 
 - **Meal** — *Regulars* are learned from your own log (eaten 3+ times,
-  frequency with recency decay), one tap to repeat, × to hide. **Camera**, **Gallery** (pick existing
+  frequency with recency decay), one tap to repeat, × to hide. **Photo of
+  food** and **Scan packages** both open the phone's own chooser (camera or
+  gallery, several at once). Each scanned package becomes an *item* with its
+  own servings / grams — a can of tuna, four slices of bread and two of cheese
+  are three items with three quantities — and one Add logs them as their own
+  rows. Photos and text go to the model with the packaged items named as
+  already counted, so nothing is counted twice. **Camera**, **Gallery** (pick existing
   photos), or **Label** (a nutrition panel → exact values, then how much you
-  had). **Scan** is a barcode (Open Food Facts, no key) with the printed panel
+  had). A scan is a barcode (Open Food Facts, no key) with the printed panel
   as the fallback. Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**.
   Refine with a correction; Add to log. "Type it in" for the rare manual entry.
 - **Shake** — typed grams, product pickers, exact arithmetic; opens on what

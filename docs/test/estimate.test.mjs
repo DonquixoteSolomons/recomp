@@ -100,3 +100,13 @@ test("a missing or rejected key is a config error, never parked or retried", asy
   mockFetch({ [DEFAULT_MODEL]: [() => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }) })] });
   await assert.rejects(() => estimate({ apiKey: "k", text: "x" }), (e) => e.config === true && !e.transient);
 });
+
+test("packaged items already counted are named in the prompt so the model leaves them out", async () => {
+  let body = null;
+  globalThis.fetch = async (url, o) => { body = JSON.parse(o.body); return ok(IDENT); };
+  await estimate({ apiKey: "k", text: "tuna, bread and cheese", known: ["Ayam Brand tuna", "Gardenia white bread"] });
+  const prompt = body.contents[0].parts.at(-1).text;
+  assert.match(prompt, /already counted separately.*Ayam Brand tuna; Gardenia white bread/);
+  await estimate({ apiKey: "k", text: "chicken rice" });
+  assert.doesNotMatch(body.contents[0].parts.at(-1).text, /already counted/);   // no items, no clause
+});

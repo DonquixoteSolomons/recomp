@@ -170,7 +170,7 @@ async function callModel(apiKey, model, body, onStatus = () => {}) {
  *   prior: an earlier estimate result to refine (its raw identification + the correction in `text`)
  * @returns {object} { result (computed), ident (raw), thumbs[], images[], usage, model (the one that answered) }
  */
-export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], onStatus }) {
+export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], known = [], onStatus }) {
   if (!apiKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
   const prepared = [];
   for (const b of images) prepared.push(await prepareImage(b));
@@ -185,6 +185,7 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
   } else {
     prompt.push("What I ate: " + (text.trim() || "(see photo)"));
   }
+  if (known.length) prompt.push("Packaged items already counted separately from their labels — do NOT include these or anything that is clearly them: " + known.join("; ") + ". Identify only what else was eaten. If nothing else was eaten, return an empty components list.");
   prompt.push(`Local time: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore", weekday: "short", hour: "2-digit", minute: "2-digit" })}.`);
 
   const body = {

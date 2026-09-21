@@ -24,7 +24,7 @@ const fromUnit = (x) => unit() === "lb" ? x / 2.20462 : x;
 const wfmt = (kg, dp = 1) => `${fmt(toUnit(kg), dp)} ${unit()}`;
 
 const state = { day: todayStr(), settings: {}, data: null, tab: "today", trend: null, products: [],
-  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, label: null, wo: { kind: null, sets: [], shot: null } };
+  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, items: [], wo: { kind: null, sets: [], shot: null } };
 
 let toastT;
 function toast(msg, ms = 1800, kind = null) {
@@ -266,23 +266,79 @@ function onPhotos(e) {
   for (const f of state.estFiles) { const img = document.createElement("img"); img.src = URL.createObjectURL(f); img.alt = ""; t.appendChild(img); }
   e.target.value = "";
 }
-$("#est-camera").addEventListener("change", onPhotos);
-$("#est-gallery").addEventListener("change", onPhotos);
+$("#est-photo").addEventListener("change", (e) => { onPhotos(e); setMealFoot(); });
 
-// the sticky footer holds the one primary action for the current step
-const FOOT = {
-  estimate: `<button class="btn primary block" id="est-go">Estimate</button>`,
-  result: `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button>`,
-  label: `<button class="btn ghost" id="label-discard">Discard</button><button class="btn primary" id="label-add">Add to log</button>`,
-};
-const setMealFoot = (mode) => { $("#meal-foot").innerHTML = FOOT[mode]; };
+// the sticky footer holds the one primary action for the current step:
+//   an estimate on screen → Discard / Add to log (adds the items too)
+//   only scanned items     → Add N items
+//   something to estimate  → Estimate
+function setMealFoot() {
+  const n = state.items.length, more = state.estFiles.length || state.fixImages.length || $("#est-text").value.trim();
+  $("#meal-foot").innerHTML = state.est
+    ? `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button>`
+    : n && !more ? `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="items-add">Add ${n} item${n === 1 ? "" : "s"}</button>`
+    : `<button class="btn primary block" id="est-go">Estimate${n ? ` + ${n} item${n === 1 ? "" : "s"}` : ""}</button>`;
+}
 $("#meal-foot").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
   if (b.id === "est-go") { if (!state.estFiles.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); }
-  else if (b.id === "est-discard" || b.id === "label-discard") resetEstimate();
+  else if (b.id === "est-discard") resetEstimate();
   else if (b.id === "est-add") addEstimate();
-  else if (b.id === "label-add") state.labelAdd?.();
+  else if (b.id === "items-add") addItems({ close: true });
 };
+$("#est-text").addEventListener("input", setMealFoot);
+
+// ---- items: scanned packages, each with its own quantity, logged as their own rows
+const itemLine = (it) => {
+  const perServing = it.basis === "serving";
+  const g = it.grams ?? (it.serving_g_or_ml ? it.servings * it.serving_g_or_ml : null);
+  const mult = perServing ? it.servings : (g ?? 0) / 100;
+  return { kcal: it.kcal * mult, protein: it.protein_g * mult, grams: g, servings: it.servings };
+};
+function renderItems() {
+  const box = $("#items"); box.innerHTML = "";
+  state.items.forEach((it, i) => {
+    const { kcal, protein, grams } = itemLine(it), perServing = it.basis === "serving", ml = it.basis === "100ml";
+    const meta = [it.via === "barcode" ? "Open Food Facts" : "label", perServing ? `serving ${it.serving_size || "1"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g`
+      : `per 100 ${ml ? "ml" : "g"}: ${fmt(it.kcal)} kcal · ${fmt(it.protein_g, 1)} g${it.serving_g_or_ml ? ` · serving ${it.serving_g_or_ml} ${ml ? "ml" : "g"}` : ""}`].join(" · ");
+    const el = document.createElement("div"); el.className = "item";
+    el.innerHTML = `<div class="name">${esc(it.product)}<small>${esc(meta)}</small></div><button class="x" aria-label="Remove">${icon("close")}</button>
+      <div class="qty">
+        <button class="step" data-d="-1" aria-label="Fewer">−</button>
+        <label class="lbl">servings <input class="num" data-f="servings" type="number" min="0" step="0.5" value="${it.servings}" inputmode="decimal"></label>
+        <label class="lbl">${ml ? "ml" : "g"} <input class="num" data-f="grams" type="number" min="0" step="any" value="${grams != null ? fmt(grams, 0).replace(/,/g, "") : ""}" inputmode="decimal" ${perServing && !it.serving_g_or_ml ? "disabled" : ""}></label>
+        <button class="step" data-d="1" aria-label="More">+</button>
+      </div>
+      <div class="out"><span class="p">${fmt(protein, 1)} g</span> · ${fmt(kcal)} kcal</div>`;
+    el.querySelector(".x").onclick = () => { state.items.splice(i, 1); renderItems(); setMealFoot(); };
+    el.querySelectorAll(".step").forEach(b => b.onclick = () => { const d = Number(b.dataset.d), stepBy = it.servings < 1 || (it.servings === 1 && d < 0) ? 0.5 : 1; it.servings = Math.max(0, Math.round((it.servings + d * stepBy) * 2) / 2); it.grams = null; renderItems(); });
+    el.querySelector('[data-f="servings"]').addEventListener("input", (ev) => { it.servings = parseFloat(ev.target.value) || 0; it.grams = null; refreshItem(el, it); });
+    el.querySelector('[data-f="grams"]').addEventListener("input", (ev) => { const g = parseFloat(ev.target.value); it.grams = Number.isFinite(g) ? g : null; if (it.serving_g_or_ml && it.grams != null) it.servings = Math.round(it.grams / it.serving_g_or_ml * 100) / 100; refreshItem(el, it); });
+    box.appendChild(el);
+  });
+}
+function refreshItem(el, it) {   // live numbers without re-rendering the input the person is typing in
+  const { kcal, protein, grams, servings } = itemLine(it);
+  el.querySelector(".out").innerHTML = `<span class="p">${fmt(protein, 1)} g</span> · ${fmt(kcal)} kcal`;
+  const sv = el.querySelector('[data-f="servings"]'), gr = el.querySelector('[data-f="grams"]');
+  if (document.activeElement !== sv) sv.value = servings; if (document.activeElement !== gr && grams != null) gr.value = fmt(grams, 0).replace(/,/g, "");
+}
+function addItem(L, via) {
+  state.items.push({ ...L, via, servings: 1, grams: null });
+  renderItems(); setMealFoot();
+}
+/** Log every item as its own row, at the same time, so each is editable and learnable on its own. */
+async function addItems({ close = false } = {}) {
+  let n = 0;
+  for (const it of state.items) {
+    const { kcal, protein, grams, servings } = itemLine(it); if (!(kcal > 0 || protein > 0)) continue;
+    const amount = it.basis === "serving" ? `${servings} serving${servings === 1 ? "" : "s"}` : `${fmt(grams, 0)} ${it.basis === "100ml" ? "ml" : "g"}`;
+    await insertMeal({ label: `${it.product} (${amount})`, kcal, lo: kcal * 0.97, hi: kcal * 1.03, protein, source: it.via, share: 1, detail: { label: it, servings, grams } }); n++;
+  }
+  state.items = []; renderItems();
+  if (close) { toast(`Added ${n} item${n === 1 ? "" : "s"}`); resetEstimate(); closeSheets(); changed(); }
+  return n;
+}
 
 /** One photo of a package: the barcode when the phone can read one and Open Food Facts knows it,
     otherwise the model reads the printed nutrition panel. Same result shape either way. */
@@ -299,33 +355,16 @@ async function readPackage(file, onStatus) {
   return { data, thumb, via: "label" };
 }
 
-// package photo -> exact values -> how much -> add
+// package photos -> items with exact values; how much of each is set on the item
 $("#est-label").addEventListener("change", async (e) => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try {
-    const { data: L, thumb, via } = await readPackage(f, (m) => $("#est-status").textContent = m);
-    state.label = L; $("#est-status").textContent = via === "barcode" ? `Open Food Facts · ${L.code}` : `label · ${L.confidence}`;
-    const per = L.basis === "serving" ? `per serving (${esc(L.serving_size)})` : `per ${L.basis}`;
-    const box = $("#est-result"); box.hidden = false;
-    box.innerHTML = `<div class="estcard">
-      <div class="dish"><b>${esc(L.product)}</b><span class="pill ${L.confidence === "high" ? "good" : L.confidence === "medium" ? "medium" : "low"}">${via}</span></div>
-      <div class="thumbs"><img src="data:image/jpeg;base64,${thumb}" alt=""></div>
-      <p><b>${per}:</b> ${fmt(L.kcal)} kcal · ${fmt(L.protein_g, 1)} g protein${L.servings_per_pack ? ` · ${L.servings_per_pack} servings per pack` : ""}</p>
-      <div class="row gap bottom">
-        <label class="lbl">${L.basis === "serving" ? "servings eaten" : L.basis === "100ml" ? "ml eaten" : "g eaten"} <input class="num" id="label-qty" type="number" min="0" step="any" value="${L.basis === "serving" ? 1 : (L.serving_g_or_ml || 100)}" inputmode="decimal"></label>
-        <div class="big" id="label-calc"></div>
-      </div>
-    </div>`;
-    const calc = () => { const q = parseFloat($("#label-qty").value) || 0, mult = L.basis === "serving" ? q : q / 100;
-      const kc = L.kcal * mult, p = L.protein_g * mult; $("#label-calc").innerHTML = `<span class="p">${fmt(p, 1)} g</span> · ${fmt(kc)}`; return { kc, p, q }; };
-    calc(); $("#label-qty").addEventListener("input", calc);
-    setMealFoot("label");
-    state.labelAdd = async () => {
-      const { kc, p, q } = calc();
-      await insertMeal({ label: `${L.product} (${q}${L.basis === "serving" ? " serving" + (q === 1 ? "" : "s") : L.basis === "100ml" ? " ml" : " g"})`, kcal: kc, lo: kc * 0.97, hi: kc * 1.03, protein: p, source: via, share: 1, detail: { label: L } });
-      toast(`Added ${L.product}`); resetEstimate(); closeSheets(); changed();
-    };
-  } catch (err) { $("#est-status").textContent = ""; $("#est-result").hidden = false; $("#est-result").innerHTML = `<div class="estcard err"><b>Couldn't read the package.</b><small>${esc(err.message)}</small></div>`; }
+  const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+  for (const [i, f] of files.entries()) {
+    const tag = files.length > 1 ? `${i + 1}/${files.length} · ` : "";
+    try {
+      const { data: L, via } = await readPackage(f, (m) => $("#est-status").textContent = tag + m);
+      addItem(L, via); $("#est-status").textContent = tag + (via === "barcode" ? `Open Food Facts · ${L.code}` : `label read · ${L.confidence}`);
+    } catch (err) { $("#est-status").textContent = tag + "couldn't read that package — " + err.message; }
+  }
 });
 
 // Google retires a model -> switch and retry once
@@ -351,7 +390,7 @@ async function runEstimate(correction = null) {
   $("#est-status").textContent = prior ? "refining…" : "estimating…"; if ($("#est-go")) $("#est-go").disabled = true;
   try {
     const args = { apiKey: state.settings.gemini_key, images: prior ? [] : state.estFiles, text, share: state.share,
-      prior, priorImages: prior ? prior.images : state.fixImages, onStatus: (m) => $("#est-status").textContent = m };
+      prior, priorImages: prior ? prior.images : state.fixImages, known: state.items.map(it => it.product), onStatus: (m) => $("#est-status").textContent = m };
     const out = await withModelFallback(() => runGemini({ ...args, model: modelToUse() }));
     await rememberModel(out.model);
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
@@ -376,6 +415,7 @@ async function runEstimate(correction = null) {
 /* Gemini failed, so the meal goes into the log NOW as an unvalued row, with its text and photos kept.
    retryPending() values it when Gemini answers again; tapping the row lets the person type it in. */
 async function parkEstimate(text, err) {
+  const logged = await addItems();                                   // the scanned items are exact: they go in now
   const shots = [];
   for (const f of state.estFiles) { try { shots.push(await prepareImage(f)); } catch {} }
   const images = [...shots.map(s => s.data), ...state.fixImages], thumb = shots[0]?.thumb || null;
@@ -389,7 +429,7 @@ async function parkEstimate(text, err) {
   }
   await db.add("estimates", { day: at.slice(0, 10), at, text, share: state.share, status: "pending", images, thumb, meal_id: mealId, attempts: 1, last_error: err.message,
     model: null, ident: null, result: null, usage: null, parent_id: null });
-  toast("Gemini didn't answer — it's in the log unvalued. The app keeps retrying; tap the row to type it in.", 5000);
+  toast(`Gemini didn't answer — ${logged ? `${logged} item${logged === 1 ? "" : "s"} added, the rest is ` : "it's "}in the log unvalued. The app keeps retrying; tap the row to type it in.`, 5000);
   resetEstimate(); closeSheets(); changed();
 }
 
@@ -439,24 +479,28 @@ function renderEstimate() {
     <div class="refine"><input class="text" id="est-refine" placeholder="Correct it — “only ate half the rice”"><button class="btn" id="est-refine-go">Refine</button></div>
   </div>`;
   $("#est-refine-go").onclick = () => { const c = $("#est-refine").value.trim(); if (c) runEstimate(c); };
-  setMealFoot("result");
+  setMealFoot();
   box.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 async function addEstimate() {
   const e = state.est, r = e?.result; if (!r) return;
+  const n = await addItems();
+  if (!r.items?.length && !(r.kcal > 0)) {                            // the model found nothing beyond the packages
+    toast(n ? `Added ${n} item${n === 1 ? "" : "s"}` : "Nothing to add"); resetEstimate(); closeSheets(); changed(); return;
+  }
   let id = null;
   if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await settlePending(meal.id, "done"); await valueRow(meal, r, e.id, /^(pending|photo)$/.test(meal.source) ? "photo" : "backfill-ai"); id = meal.id; } }
   if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
   await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
-  toast((state.fixing ? "Valued: " : "Added ") + r.dish); resetEstimate(); closeSheets(); changed();
+  toast((state.fixing ? "Valued: " : "Added ") + r.dish + (n ? ` + ${n} item${n === 1 ? "" : "s"}` : "")); resetEstimate(); closeSheets(); changed();
 }
 function resetEstimate() {
   if (state.fixing) settlePending(state.fixing, "pending", "fixing");                                   // sheet gave up on it: back to the retry queue (no-op once settled)
-  state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.label = null; state.share = 1;
+  state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.items = []; state.share = 1; $("#items").innerHTML = "";
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
   $$("#est-thumbs img").forEach(i => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
   $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = ""; $("#recall").innerHTML = "";
-  $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = ""; state.labelAdd = null; setMealFoot("estimate");
+  $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = ""; setMealFoot();
 }
 async function startFix(meal) {
   resetEstimate(); state.fixing = meal.id; openSheet("meal");
