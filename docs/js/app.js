@@ -6,6 +6,8 @@ import * as eng from "./engine.js";
 import { estimate as runGemini, readLabel, readWorkout, prepareImage, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
 import { detectBarcode, lookupBarcode, unitFor, normalizeServing } from "./barcode.js";
+import { parseWorkoutText, groupSets, groupText, setsSummary } from "./workout.js";
+import { roughGuess } from "./guess.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -126,7 +128,7 @@ function kinds() {
 const LEGACY_KINDS = { revl_move: "REVL Move", revl_sweat: "REVL Sweat", revl_perform: "REVL Perform", run_vest: "Vest run", calves: "Calves", run: "Run", lift: "Strength", swim: "Swim", cycle: "Cycle", walk: "Walk", class: "Class", other: "Workout" };
 const labelKind = (k) => kinds().find(x => x.key === k)?.label || LEGACY_KINDS[k] || k;
 const workoutLine = (w, { kcal = true } = {}) => {
-  if (w.sets?.length) { const by = {}; for (const s of w.sets) (by[s.exercise] ||= []).push(`${s.weight}×${s.reps}`); return Object.entries(by).map(([e, ss]) => `${e} ${ss.join(", ")}`).join(" · "); }
+  if (w.sets?.length) return setsSummary(w.sets);
   return [w.duration_min ? `${w.duration_min} min` : null, w.distance_km ? `${w.distance_km} km` : null, kcal && w.kcal ? `${w.kcal} kcal` : null, w.detail].filter(Boolean).join(" · ");
 };
 
@@ -170,7 +172,9 @@ function render() {
   const weekNote = v.kcal === "over" && d.week.kcal_avg != null ? ` · the week is what counts: ${fmt(d.week.kcal_avg)} kcal/day so far` : "";
   vd.className = "verdict " + (d.meals.length ? tone : "") + (tone === "ok" && lastVerdictOk === false && d.is_today ? " pop" : "");
   lastVerdictOk = d.is_today ? tone === "ok" : lastVerdictOk;
-  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pending ? `${pending} meal${pending > 1 ? "s" : ""} waiting for AI — totals are short · ` : ""}${v.protein_msg} · ${v.kcal_msg}${weekNote}</small></div>`;
+  const unvalued = d.meals.filter(m => m.source === "pending" && !(m.kcal > 0)).length, rough = pending - unvalued;
+  const pendNote = unvalued ? `${unvalued} meal${unvalued > 1 ? "s" : ""} waiting for AI — totals are short · ` : rough ? `${rough} rough guess${rough > 1 ? "es" : ""} until the AI is back · ` : "";
+  vd.innerHTML = `<span class="lamp"></span><div><b>${head}</b><small>${pendNote}${v.protein_msg} · ${v.kcal_msg}${weekNote}</small></div>`;
 
   // daily goals, Duolingo-quest style
   const goals = [
@@ -189,9 +193,10 @@ function render() {
     if (r._t === "meal") {
       const parked = r.source === "pending", isShake = r.source === "shake";
       li.className = parked ? "pending" : isShake ? "shake" : "";
-      const sub = [time, parked ? "waiting for AI · retries on its own" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" || r.source === "backfill-est" ? "from chat · valued" : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : r.source === "barcode" ? "barcode" : null,
+      const rough = parked && r.kcal > 0;
+      const sub = [time, rough ? "rough guess · AI will refine it" : parked ? "waiting for AI · retries on its own" : r.source === "backfill" ? "from chat" : r.source === "backfill-ai" || r.source === "backfill-est" ? "from chat · valued" : r.source === "photo" ? "estimated" : r.source === "label" ? "label" : r.source === "barcode" ? "barcode" : null,
         r.share_frac < 1 ? `${Math.round(r.share_frac * 100)}% share` : null, r.venue].filter(Boolean).join(" · ");
-      li.innerHTML = `<span class="ic">${icon(isShake ? "shake" : "meal")}</span><span class="l"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span><span class="n"><b>${parked ? "?" : fmt(r.protein_g, 0) + " g"}</b><small>${parked ? "?" : fmt(r.kcal) + " kcal"}</small></span>`;
+      li.innerHTML = `<span class="ic">${icon(isShake ? "shake" : "meal")}</span><span class="l"><b>${esc(r.label)}</b><small>${esc(sub)}</small></span><span class="n"><b>${parked && !rough ? "?" : (rough ? "~" : "") + fmt(r.protein_g, 0) + " g"}</b><small>${parked && !rough ? "?" : (rough ? "~" : "") + fmt(r.kcal) + " kcal"}</small></span>`;
       li.onclick = () => openRow(r, "meal");
     } else {
       li.className = "workout";
@@ -466,17 +471,22 @@ async function parkEstimate(text, err) {
   const shots = [];
   for (const f of state.estFiles) { try { shots.push(await prepareImage(f)); } catch {} }
   const images = [...shots.map(s => s.data), ...state.fixImages], thumb = shots[0]?.thumb || null;
-  let mealId = state.fixing, at;
+  let mealId = state.fixing, at, guess = null;
   if (mealId) {
     const m = await db.get("meals", mealId); at = m?.at || atFor();
     if (m) await db.put("meals", { ...m, needs_review: 1 });
   } else {
     at = atFor();
-    mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: 0, lo: 0, hi: 0, protein: 0, source: "pending", share: state.share, needs_review: 1, detail: { raw: text } });
+    // a best guess instead of "?": your own past meals like it, else the reference table; the AI replaces it later
+    guess = text.trim() ? roughGuess(text, state.all?.meals || [], state.share) : null;
+    mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: guess?.kcal || 0, lo: guess?.kcal_lo || 0, hi: guess?.kcal_hi || 0, protein: guess?.protein_g || 0,
+      source: "pending", share: 1, share_frac: state.share, needs_review: 1, detail: { raw: text, rough: guess ? { basis: guess.basis, from: guess.from } : null } });
   }
   await db.add("estimates", { day: at.slice(0, 10), at, text, share: state.share, status: "pending", images, thumb, meal_id: mealId, attempts: 1, last_error: err.message,
     model: null, ident: null, result: null, usage: null, parent_id: null });
-  toast(`Gemini didn't answer — ${logged ? `${logged} item${logged === 1 ? "" : "s"} added, the rest is ` : "it's "}in the log unvalued. The app keeps retrying; tap the row to type it in.`, 5000);
+  toast(guess
+    ? `Google's AI is overloaded right now. Logged a rough guess — ${fmt(guess.kcal)} kcal · ${fmt(guess.protein_g, 0)} g, from ${guess.basis === "history" ? `${guess.from.length} of your past meals like it` : "the reference table"}${logged ? ` — plus ${logged} item${logged === 1 ? "" : "s"}` : ""}. It gets refined on its own when the AI is back.`
+    : `Google's AI is overloaded right now — ${logged ? `${logged} item${logged === 1 ? "" : "s"} added, the rest is ` : "it's "}in the log to be valued when it's back. Tap the row to type it in.`, 6000);
   resetEstimate(); closeSheets(); changed();
 }
 
@@ -497,7 +507,7 @@ async function retryPending({ force = false } = {}) {
         await rememberModel(out.model);
         await db.put("estimates", { ...p, status: "done", images: [], model: out.model, ident: out.ident, result: out.result, usage: out.usage });
         await valueRow(meal, out.result, p.id, meal.source === "pending" ? "photo" : undefined);
-        toast(`Valued: ${out.result.dish} — ${fmt(out.result.protein_g, 0)} g · ${fmt(out.result.kcal)} kcal`, 4000);
+        toast(`${meal.kcal > 0 ? "Refined" : "Valued"}: ${out.result.dish} — ${fmt(out.result.protein_g, 0)} g · ${fmt(out.result.kcal)} kcal${meal.kcal > 0 ? ` (rough guess was ${fmt(meal.kcal)})` : ""}`, 4500);
         await changed();
       } catch (e) {
         await db.put("estimates", { ...p, attempts: (p.attempts || 0) + 1, last_error: e.message });
@@ -505,6 +515,17 @@ async function retryPending({ force = false } = {}) {
       }
     }
   } finally { retrying = false; }
+}
+/** Rows parked before rough guesses existed (or with no guess possible then) get one now. */
+async function roughFill() {
+  let n = 0;
+  for (const m of state.all?.meals || []) {
+    if (m.source !== "pending" || m.kcal > 0) continue;
+    let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = {}; } }
+    const g = d?.raw ? roughGuess(d.raw, state.all.meals, m.share_frac || 1) : null; if (!g) continue;
+    await db.put("meals", { ...m, kcal: g.kcal, kcal_lo: g.kcal_lo, kcal_hi: g.kcal_hi, protein_g: g.protein_g, detail: { ...(d || {}), rough: { basis: g.basis, from: g.from } } }); n++;
+  }
+  if (n) await changed();
 }
 async function settlePending(mealId, status, from = null) {
   for (const p of await db.all("estimates")) if (p.meal_id === mealId && (from ? p.status === from : (p.status === "pending" || p.status === "fixing"))) await db.put("estimates", { ...p, status, images: status === "pending" ? p.images : [] });
@@ -698,19 +719,37 @@ function renderWorkoutSheet() {
   $("#wo-km").parentElement.hidden = !/run|swim|cycle|walk|ride|hike|row/i.test(state.wo.kind + " " + labelKind(state.wo.kind));
   const dflt = parseFloat(state.settings["burn_" + state.wo.kind] || state.settings.burn_other || 0);
   $("#wo-burn-note").textContent = `Without a kcal figure, ${labelKind(state.wo.kind)} counts as ${fmt(dflt)} kcal (change it in Settings). A screenshot with calories overrides it.`;
-  if (!$("#wo-exercise").options.length) for (const x of EXERCISES) { const o = document.createElement("option"); o.value = x; o.textContent = x; $("#wo-exercise").appendChild(o); }
+  // suggestions: the standard list plus every exercise you have logged
+  const names = [...new Set([...EXERCISES, ...(state.all?.workouts || []).flatMap(w => (w.sets || []).map(s => s.exercise))])].filter(Boolean);
+  $("#wo-ex-list").innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join("");
   const box = $("#wo-sets"); box.innerHTML = "";
-  state.wo.sets.forEach((s, i) => {
+  let at = 0;
+  for (const g of groupSets(state.wo.sets)) {
+    const from = at; at += g.n;
     const el = document.createElement("div"); el.className = "set";
-    el.innerHTML = `<span>${i + 1}</span><span>${esc(s.exercise)}</span><span>${s.weight} kg × ${s.reps}<span class="e1">e1RM ${e1rm(s.weight, s.reps)}</span></span><button class="x" aria-label="Remove">${icon("close")}</button>`;
-    el.querySelector(".x").onclick = () => { state.wo.sets.splice(i, 1); renderWorkoutSheet(); };
+    el.innerHTML = `<span>${esc(g.exercise)}</span><span>${esc(groupText(g))}</span><button class="x" aria-label="Remove">${icon("close")}</button>`;
+    el.querySelector(".x").onclick = () => { state.wo.sets.splice(from, g.n); renderWorkoutSheet(); };
     box.appendChild(el);
-  });
+  }
+  $("#wo-count").textContent = state.wo.sets.length ? `${groupSets(state.wo.sets).length} exercises · ${state.wo.sets.length} sets` : "";
 }
+const knownExercises = () => [...new Set([...EXERCISES, ...(state.all?.workouts || []).flatMap(w => (w.sets || []).map(s => s.exercise))])].filter(Boolean);
+// one exercise: sets × reps (or "30s", "10/side"), kg blank for bodyweight — read by the same parser as a pasted session
 $("#wo-addset").onclick = () => {
-  const w = parseFloat($("#wo-w").value), r = parseInt($("#wo-r").value, 10);
-  if (!Number.isFinite(w) || !r) return toast("Weight and reps");
-  state.wo.sets.push({ exercise: $("#wo-exercise").value, weight: w, reps: r }); $("#wo-r").value = ""; renderWorkoutSheet();
+  const ex = $("#wo-exercise").value.trim(), n = parseInt($("#wo-n").value, 10) || 1, amount = $("#wo-r").value.trim(), kg = parseFloat($("#wo-w").value);
+  if (!ex || !amount) return toast("Exercise and reps");
+  const line = `${ex}: ${n} x ${amount.replace(/\/\s*(side|leg|arm)/i, " per $1").replace(/(\d)\s*s$/i, "$1 sec")}${Number.isFinite(kg) && kg > 0 ? ` ${kg} kg` : ""}`;
+  const { sets } = parseWorkoutText(line, knownExercises());
+  if (!sets.length) return toast("Couldn't read that — try 15, 30s or 10/side");
+  state.wo.sets.push(...sets); $("#wo-exercise").value = ""; $("#wo-r").value = ""; renderWorkoutSheet(); $("#wo-exercise").focus();
+};
+$("#wo-parse").onclick = () => {
+  const { sets, unparsed } = parseWorkoutText($("#wo-paste").value, knownExercises());
+  state.wo.sets.push(...sets); renderWorkoutSheet();
+  $("#wo-parse-note").textContent = sets.length
+    ? `Read ${groupSets(sets).length} exercises, ${sets.length} sets.${unparsed.length ? ` Couldn't read: ${unparsed.join(" · ")}` : ""}`
+    : "Couldn't find any sets — write them like “Push-ups: 3 x 15”, “Side plank: 3 x 30 sec per side”.";
+  if (sets.length && !unparsed.length) { $("#wo-paste").value = ""; $("#wo-paste").closest("details").open = false; }
 };
 $("#wo-shot").addEventListener("change", async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
@@ -740,7 +779,7 @@ $("#wo-log").onclick = async () => {
     if (state.wo.shot) row.shot = state.wo.shot;
   }
   await db.add("workouts", row);
-  state.wo = { kind, sets: [], shot: null }; ["wo-min", "wo-km", "wo-kcal", "wo-note", "wo-w", "wo-r"].forEach(id => ($("#" + id).value = "")); $("#wo-shot-status").textContent = "";
+  state.wo = { kind, sets: [], shot: null }; ["wo-min", "wo-km", "wo-kcal", "wo-note", "wo-w", "wo-r", "wo-exercise", "wo-paste"].forEach(id => ($("#" + id).value = "")); $("#wo-n").value = 3; $("#wo-shot-status").textContent = ""; $("#wo-parse-note").textContent = "";
   toast(`${labelKind(kind)} logged`); closeSheets(); changed();
 };
 
@@ -858,9 +897,9 @@ function renderLifts() {
   const el = $("#lifts"), rows = liftProgress(state.all.workouts);
   el.hidden = !rows.length;
   if (!rows.length) return;
-  el.innerHTML = `<div class="card-head"><h2>Lifts</h2><span class="muted">e1RM vs goal</span></div>` + rows.map(r => `<div class="lift">
-    <div>${esc(r.exercise)}<small>best ${esc(r.best_set)} on ${r.best_day} · last ${esc(r.last_set)} · ${r.sessions} session${r.sessions > 1 ? "s" : ""}</small></div>
-    <div class="val"><b>${fmt(r.best, 1)}</b><small>e1RM${r.goal ? ` / ${r.goal}` : ""}</small></div>
+  el.innerHTML = `<div class="card-head"><h2>Training</h2><span class="muted">best so far</span></div>` + rows.map(r => `<div class="lift">
+    <div>${esc(r.exercise)}<small>${r.metric === "e1rm" ? `best ${esc(r.best_set)} on ${r.best_day} · ` : `on ${r.best_day} · `}last ${esc(r.last_set)} · ${r.sessions} session${r.sessions > 1 ? "s" : ""}</small></div>
+    <div class="val"><b>${r.metric === "e1rm" ? fmt(r.best, 1) : esc(r.best_set)}</b><small>${r.metric === "e1rm" ? `e1RM${r.goal ? ` / ${r.goal}` : ""}` : "best set"}</small></div>
     ${r.goal ? `<div class="goalbar"><i style="width:${Math.min(100, r.best / r.goal * 100)}%"></i></div>` : ""}
   </div>`).join("");
 }
@@ -1066,6 +1105,7 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
       if (state.all.meals.length || state.all.body.length) await db.setSetting("setup_done", "1");   // an existing phone already has its targets
       else openSetup();
     }
+    await roughFill();
     retryPending({ force: true });
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo) {

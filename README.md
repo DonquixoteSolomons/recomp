@@ -163,8 +163,14 @@ open as sheets with the one primary action pinned at the bottom:
 - **Workout** — your own kinds (Settings; classes, run, swim, cycle, walk…) take
   minutes, km, and kcal if your watch or Strava shows it — or **From
   screenshot**, which reads those off a Strava/Garmin/REVL summary. A kcal
-  figure overrides the per-kind default. **Strength** takes exercise × sets
-  (kg × reps) and feeds the Lifts card.
+  figure overrides the per-kind default. **Strength** is anything with sets —
+  weights, calisthenics, core: an exercise (free text, with suggestions), sets,
+  reps (`15`, `30s` for a hold, `10/side`) and kg (blank = bodyweight). Or paste
+  a whole session written the usual way (`Push-ups: 3 x 15`,
+  `Side planks: 3 x 30 sec per side`); a heading with a weight in it
+  (`Calf work with 10kg vest:`) applies to the lines under it. The Trend tab's
+  Training card tracks barbell lifts by estimated 1RM and everything else by
+  best set.
 
 Weigh-in by hand and backups live under **Trend → Scale**.
 
@@ -181,7 +187,9 @@ for chains; Google-grounded search is not on the free tier for the 3.x models.
 Free-tier quotas are per model per day: when one is used up, or a model is
 overloaded (503), the app tries the next Flash model and remembers which one
 answered. If none does, the meal still goes into the log at once as an
-unvalued row with its text and photos kept; the app values it on its own
+row with a **rough guess** — from your own past meals of the same dish, else
+the reference table — marked "~" and "rough guess", with its text and photos
+kept; the app replaces it with a proper estimate on its own
 when Gemini is back (on open, on return to the app, every 2 min while open),
 or you tap the row and type it in. A logged meal is never lost to an outage.
 

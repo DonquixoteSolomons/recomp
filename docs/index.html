@@ -217,14 +217,22 @@
       <p class="note" id="wo-burn-note"></p>
     </div>
     <div id="wo-strength" class="stack" hidden>
-      <label class="lbl">exercise <select id="wo-exercise" class="select" aria-label="Exercise"></select></label>
+      <div class="card-head"><span class="label">This session</span><span class="muted" id="wo-count"></span></div>
       <div id="wo-sets" class="sets"></div>
+      <details class="paste">
+        <summary>Paste or type a whole session</summary>
+        <textarea class="text" id="wo-paste" rows="7" placeholder="Push-ups: 3 x 15&#10;Walking lunges: 3 x 10 per leg&#10;Side planks: 3 x 30 sec per side&#10;Calf work with 10kg vest:&#10;Seated calf raise: 3 x 20"></textarea>
+        <div class="row gap top"><button class="btn" type="button" id="wo-parse">Read it</button><p class="note grow" id="wo-parse-note"></p></div>
+      </details>
+      <label class="lbl">exercise <input class="text" id="wo-exercise" list="wo-ex-list" placeholder="e.g. Push-ups, Back squat, Side plank" autocomplete="off"></label>
+      <datalist id="wo-ex-list"></datalist>
       <div class="row gap bottom">
-        <label class="lbl">kg <input class="num" id="wo-w" type="number" min="0" step="0.5" inputmode="decimal"></label>
-        <label class="lbl">reps <input class="num" id="wo-r" type="number" min="1" step="1" inputmode="numeric"></label>
-        <button class="btn" id="wo-addset"><svg><use href="#i-plus"/></svg>Set</button>
+        <label class="lbl">sets <input class="num" id="wo-n" type="number" min="1" max="20" step="1" value="3" inputmode="numeric"></label>
+        <label class="lbl">reps <input class="num" id="wo-r" type="text" placeholder="15" autocomplete="off"></label>
+        <label class="lbl">kg <input class="num" id="wo-w" type="number" min="0" step="0.5" placeholder="body" inputmode="decimal"></label>
       </div>
-      <p class="note">Sets are what track your 100/100/100. Calories for strength work use the per-kind default.</p>
+      <button class="btn block" type="button" id="wo-addset"><svg><use href="#i-plus"/></svg>Add sets</button>
+      <p class="note">Reps can be <b>15</b>, <b>30s</b> for a hold, or <b>10/side</b>. Leave kg blank for bodyweight; a vest or dumbbell is the kg. Calisthenics, weights and core all go here — calories use the Strength default unless you edit the entry.</p>
     </div>
     <input class="text" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
   </div>

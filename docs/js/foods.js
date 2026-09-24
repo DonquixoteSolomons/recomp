@@ -192,31 +192,8 @@ export function recentFoods(meals, today, n = 8, { minCount = 3, hidden = [] } =
 export const normFoodLabel = normLabel;
 
 // ---- strength work
-export const EXERCISES = [
-  "Back squat", "Bench press", "Deadlift", "Overhead press", "Barbell row", "Pull-up",
-  "Calf raise (vest)", "Calf raise", "Romanian deadlift", "Lunge", "Dumbbell press", "Other",
-];
-export const GOAL_LIFTS = { "Back squat": 100, "Bench press": 100, "Deadlift": 100 };
-/** Epley estimated one-rep max. reps=1 returns the weight itself. */
-export const e1rm = (weight, reps) => (reps <= 1 ? weight : Math.round(weight * (1 + reps / 30) * 10) / 10);
-/** Per exercise: best estimated 1RM and when, plus the last session's top set. */
-export function liftProgress(workouts) {
-  const by = new Map();
-  for (const w of workouts) {
-    for (const s of (w.sets || [])) {
-      const ex = s.exercise || "Other", wt = parseFloat(s.weight) || 0, reps = parseInt(s.reps, 10) || 0;
-      if (!wt || !reps) continue;
-      const est = e1rm(wt, reps);
-      const p = by.get(ex) || { exercise: ex, best: 0, best_day: "", best_set: "", last_day: "", last_set: "", sessions: new Set() };
-      p.sessions.add(w.day);
-      if (est > p.best) { p.best = est; p.best_day = w.day; p.best_set = `${wt} kg × ${reps}`; }
-      if (w.day >= p.last_day) { p.last_day = w.day; p.last_set = `${wt} kg × ${reps}`; }
-      by.set(ex, p);
-    }
-  }
-  return [...by.values()].map(p => ({ ...p, sessions: p.sessions.size, goal: GOAL_LIFTS[p.exercise] || null }))
-    .sort((a, b) => (b.goal ? 1 : 0) - (a.goal ? 1 : 0) || b.best - a.best);
-}
+// sets and lift progress live in workout.js; re-exported so existing imports keep working
+export { EXERCISES, GOAL_LIFTS, e1rm, liftProgress } from "./workout.js";
 
 /** One-time cleanup of chat-imported rows the parser matched by pattern: their label is the
     raw sentence; the method string (e.g. "kaya_set+yakult", "shake") says what it was. */

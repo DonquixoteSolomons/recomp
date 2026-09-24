@@ -19,7 +19,8 @@ export const DEFAULT_MODEL = "gemini-3.6-flash";
 // models Google has closed to new keys; a stored setting naming one is migrated to DEFAULT_MODEL
 export const RETIRED_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
 // each model has its own free-tier quota; tried in order when the chosen model's day is used up
-export const FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+// each model has its own capacity pool as well as its own quota: more of them = more chances when Google sheds free-tier load
+export const FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 export const timers = { sleep: (ms) => new Promise(r => setTimeout(r, ms)) };   // stubbed by the tests
 const MAX_EDGE = 1280, THUMB_EDGE = 320;
 
@@ -144,14 +145,14 @@ async function callModel(apiKey, model, body, onStatus = () => {}) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) { const e = new Error("You're offline"); e.transient = true; throw e; }
   const chain = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
   let daily = false, overloaded = false;
-  for (const m of chain) {
+  for (const [i, m] of chain.entries()) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try { return { ...(await generate(apiKey, m, body)), model: m }; }
       catch (e) {
         if (e.status === 404 && m !== model) break;                       // a fallback Google no longer serves
         if (!e.transient) throw e;
         daily ||= !!e.daily; overloaded ||= !e.rateLimited;
-        if (!e.rateLimited || e.daily || attempt) { onStatus(`${e.message} — trying the next model`); break; }
+        if (!e.rateLimited || e.daily || attempt) { if (i < chain.length - 1) onStatus(`${e.message} — trying the next model (${i + 2}/${chain.length})`); break; }
         const s = Math.min(60, Math.max(5, Math.ceil(e.retryAfter || 20)));
         onStatus(`${m} is busy — retrying in ${s} s`); await timers.sleep(s * 1000);
       }

@@ -311,7 +311,13 @@ dialog.modal h2{margin-bottom:4px}
 /* sets */
 .sets{display:flex;flex-direction:column}
 .sets:empty{display:none}
-.sets .set{display:grid;grid-template-columns:28px 1fr auto 36px;gap:10px;align-items:center;font-size:14px;padding:8px 0;border-bottom:2px solid var(--line)}
+.sets .set{display:grid;grid-template-columns:minmax(0,1fr) auto 36px;gap:10px;align-items:center;font-size:14px;padding:8px 0;border-bottom:2px solid var(--line)}
+.sets .set > span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sets .set > span:nth-child(2){text-align:right;white-space:nowrap}
+.sets .set .e1{display:block}
+details.paste{border:2px solid var(--line);border-radius:var(--r-s);padding:4px 12px}
+details.paste[open]{padding-bottom:12px}
+details.paste textarea{margin-top:6px}
 .sets .set .e1{color:var(--muted);font-size:12px;margin-left:6px}
 .sets .set .x{width:36px;height:36px;border-radius:50%;color:var(--faint);display:grid;place-items:center}
 .sets .set .x svg{width:16px;height:16px}
