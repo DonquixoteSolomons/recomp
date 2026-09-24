@@ -22,6 +22,11 @@ export const RETIRED_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gem
 // each model has its own capacity pool as well as its own quota: more of them = more chances when Google sheds free-tier load
 export const FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 export const timers = { sleep: (ms) => new Promise(r => setTimeout(r, ms)) };   // stubbed by the tests
+/* The other free services, set by the app from Settings (the keys live on the phone only):
+   OpenRouter — a second, independent AI for when every Gemini model is down (free vision models, 50 a day);
+   Tavily — web search for the venue's menu, published nutrition and people's own calorie counts (1,000 a month). */
+export const providers = { openrouterKey: "", tavilyKey: "", referer: "" };
+export const OPENROUTER_MODELS = ["google/gemma-4-31b-it:free", "qwen/qwen3.8-27b:free", "openrouter/free"];
 const MAX_EDGE = 1280, THUMB_EDGE = 320;
 
 const REF_LINES = REFERENCE.map(r => `${r.id} | ${r.name} | ${r.portion}`).join("\n");
@@ -35,6 +40,7 @@ Method:
 4. Weights the person states (e.g. "239 g rice") override what you see: rice 100 g ≈ 130 kcal, 2.7 g protein; cooked lean meat 100 g ≈ 165-230 kcal, 25-31 g protein.
 5. If the person says they shared with others, do NOT reduce for that — the app applies their share separately. Only apply explicit "I ate X of it" statements about components.
 6. Chains and packaged products publish nutrition figures (McDonald's, KFC, Subway, Guzman y Gomez, Luckin, Yakult, Meiji, supermarket brands). When the venue or product is one you know published figures for, use those via ref: null, say so in "grounding", and mark confidence medium unless the item is unambiguous.
+7. Web results, when given, come from a search about this venue and dish: menus, published nutrition, food-database entries (MyFitnessPal, HPB), and people's own calorie counts in blogs and forums. Use them: the venue's published figure for the same item beats everything (ref: null, confidence high); menu descriptions tell you the components and portion; other people's counts for the same dish at the same venue calibrate the quantity. Ignore results about a different venue or dish. Name the sites you relied on in "grounding" as "web: <site> — <what it said>".
 
 Reference table (id | name | one portion):
 ${REF_LINES}
@@ -141,9 +147,52 @@ async function generate(apiKey, model, body) {
 /** generate() with the free tier's failure modes handled: a per-minute 429 waits and retries once;
  *  a per-day 429, a 5xx or a second per-minute 429 moves on to the next model, which has its own
  *  quota and capacity. onStatus(text) tells the UI what is happening. Returns the model that answered. */
+// ---- OpenRouter: the same request in OpenAI's format; the schema goes in the prompt (not every free model takes response_format)
+function toOpenAI(body) {
+  const sys = (body.system_instruction?.parts || []).map(p => p.text).join("\n");
+  const content = (body.contents?.[0]?.parts || []).map(p => p.inline_data
+    ? { type: "image_url", image_url: { url: `data:${p.inline_data.mime_type};base64,${p.inline_data.data}` } }
+    : { type: "text", text: p.text });
+  const schema = body.generationConfig?.responseSchema;
+  if (schema) content.push({ type: "text", text: "Reply with ONE JSON object and nothing else — no prose, no code fences. It must follow this schema (OBJECT/ARRAY/STRING/NUMBER are JSON types; nullable fields may be null): " + JSON.stringify(schema) });
+  return { messages: [...(sys ? [{ role: "system", content: sys }] : []), { role: "user", content }],
+    temperature: body.generationConfig?.temperature ?? 0.2, max_tokens: body.generationConfig?.maxOutputTokens || 2000 };
+}
+/** The JSON object in a reply, with or without fences or a sentence around it. */
+export function extractJson(text) {
+  const t = String(text || "").replace(/```(?:json)?/gi, "");
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  return a >= 0 && b > a ? t.slice(a, b + 1) : t.trim();
+}
+async function openRouter(model, body) {
+  let r;
+  try {
+    r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${providers.openrouterKey}`, "Content-Type": "application/json", "HTTP-Referer": providers.referer || "https://github.com", "X-Title": "Recomp" },
+      body: JSON.stringify({ model, ...toOpenAI(body) }),
+      signal: typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(90_000) : undefined,
+    });
+  } catch { const e = new Error(`${model}: no connection`); e.transient = true; throw e; }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 || r.status === 403) throw configError("OpenRouter rejected the backup key. Check it in Settings.");
+  const text = j.choices?.[0]?.message?.content;
+  if (!r.ok || j.error || !text) { const e = new Error(`${model.split("/").pop()}: ${r.ok ? (j.error?.message || "empty reply") : r.status}`); e.transient = true; e.status = r.status; throw e; }
+  return { text: extractJson(text), usage: { promptTokenCount: j.usage?.prompt_tokens || 0, candidatesTokenCount: j.usage?.completion_tokens || 0 } };
+}
+async function backup(body, onStatus) {
+  for (const [i, m] of OPENROUTER_MODELS.entries()) {
+    onStatus(`Gemini is down — asking the backup AI (${m.split("/").pop().replace(":free", "")}, ${i + 1}/${OPENROUTER_MODELS.length})…`);
+    try { return { ...(await openRouter(m, body)), model: "openrouter:" + m }; }
+    catch (e) { if (e.config) throw e; }
+  }
+  return null;
+}
+
 async function callModel(apiKey, model, body, onStatus = () => {}) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) { const e = new Error("You're offline"); e.transient = true; throw e; }
-  const chain = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
+  if (!apiKey && providers.openrouterKey) { const b = await backup(body, onStatus); if (b) return b; }   // no Gemini key at all: the backup is the AI
+  const chain = apiKey ? [model, ...FALLBACK_MODELS.filter(m => m !== model)] : [];
   let daily = false, overloaded = false;
   for (const [i, m] of chain.entries()) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -158,12 +207,41 @@ async function callModel(apiKey, model, body, onStatus = () => {}) {
       }
     }
   }
+  if (apiKey && providers.openrouterKey) { const b = await backup(body, onStatus); if (b) return b; }
   const e = new Error(overloaded && !daily
-    ? "Every Gemini model is overloaded or unreachable right now."
+    ? `Every Gemini model is overloaded or unreachable right now${providers.openrouterKey ? ", and so is the backup AI" : ""}.`
     : daily ? "Gemini's free tier is used up for today on every model it tries — it resets at midnight Pacific (3–4 pm Singapore)."
     : "Gemini's free tier is busy on every model it tries.");
   e.transient = true; e.rateLimited = !overloaded || daily; throw e;
 }
+
+// ---- web lookup (Tavily): only when a place is named; a bonus, never a blocker; cached so a regular spot costs one search
+const VENUE = /\b(?:from|at)\s+\S|@\s*\S/i;
+const lookupCache = new Map();
+export async function webLookup(text) {
+  if (!providers.tavilyKey || !VENUE.test(text || "")) return null;
+  const query = `${String(text).replace(/\s+/g, " ").trim().slice(0, 180)} calories nutrition Singapore`;
+  const key = query.toLowerCase();
+  if (lookupCache.has(key)) return lookupCache.get(key);
+  try { const c = JSON.parse(localStorage.getItem("lookup:" + key) || "null"); if (c && Date.now() - c.t < 30 * 864e5) { lookupCache.set(key, c.v); return c.v; } } catch {}
+  let r;
+  try {
+    r = await fetch("https://api.tavily.com/search", {
+      method: "POST", headers: { Authorization: `Bearer ${providers.tavilyKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, search_depth: "basic", max_results: 6, include_answer: false }),
+      signal: typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(15_000) : undefined,
+    });
+  } catch { return null; }
+  if (!r.ok) return r.status === 401 || r.status === 403 ? { error: "Tavily rejected the search key — check it in Settings.", results: [] } : null;
+  const j = await r.json().catch(() => ({}));
+  const results = (j.results || []).filter(x => x.content && x.url).slice(0, 6)
+    .map(x => ({ title: String(x.title || "").slice(0, 120), url: x.url, content: String(x.content).replace(/\s+/g, " ").slice(0, 600) }));
+  const v = results.length ? { query, results } : null;
+  lookupCache.set(key, v);
+  try { localStorage.setItem("lookup:" + key, JSON.stringify({ t: Date.now(), v })); } catch {}
+  return v;
+}
+const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
 
 /**
  * Run one estimate.
@@ -171,8 +249,8 @@ async function callModel(apiKey, model, body, onStatus = () => {}) {
  *   prior: an earlier estimate result to refine (its raw identification + the correction in `text`)
  * @returns {object} { result (computed), ident (raw), thumbs[], images[], usage, model (the one that answered) }
  */
-export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], known = [], onStatus }) {
-  if (!apiKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
+export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], text = "", share = 1, prior = null, priorImages = [], known = [], onStatus = () => {} }) {
+  if (!apiKey && !providers.openrouterKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings (aistudio.google.com → Get API key).");
   const prepared = [];
   for (const b of images) prepared.push(await prepareImage(b));
   const imageParts = prepared.map(p => ({ inline_data: { mime_type: "image/jpeg", data: p.data } }));
@@ -185,6 +263,13 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
     prompt.push("Re-identify, taking the correction into account.");
   } else {
     prompt.push("What I ate: " + (text.trim() || "(see photo)"));
+  }
+  if (share < 1) prompt.push(`The person ate a share of ${Math.round(share * 100)}% — the app multiplies by that afterwards. Give components and quantities for the WHOLE dish as served (web figures for a whole bowl or plate stay whole); do not halve anything for sharing yourself.`);
+  let lookup = null;
+  if (!prior && text.trim()) {
+    if (providers.tavilyKey && VENUE.test(text)) onStatus("searching the web for this place's menu and calorie counts…");
+    lookup = await webLookup(text);
+    if (lookup?.results?.length) prompt.push("Web results about this venue and dish (use per rule 7):\n" + lookup.results.map((x, i) => `[${i + 1}] ${x.title} — ${host(x.url)}\n${x.content}`).join("\n\n"));
   }
   if (known.length) prompt.push("Packaged items already counted separately from their labels — do NOT include these or anything that is clearly them: " + known.join("; ") + ". Identify only what else was eaten. If nothing else was eaten, return an empty components list.");
   prompt.push(`Local time: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore", weekday: "short", hour: "2-digit", minute: "2-digit" })}.`);
@@ -202,13 +287,14 @@ export async function estimate({ apiKey, model = DEFAULT_MODEL, images = [], tex
     catch { if (attempt) { const err = new Error("Gemini returned malformed JSON twice: " + raw.slice(0, 200)); err.transient = true; throw err; } }
   }
   const result = computeFromIdentification(ident, share);
-  return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), usage, model: used };
+  const sources = (lookup?.results || []).map(x => ({ title: x.title, url: x.url, host: host(x.url) }));
+  return { result, ident, thumbs: prepared.map(p => p.thumb), images: prepared.map(p => p.data), usage, model: used, sources, lookup_error: lookup?.error || null };
 }
 
 
 // ------------------------------------------------------------ other readers
 async function extract(apiKey, model, blob, instruction, schema, onStatus) {
-  if (!apiKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings.");
+  if (!apiKey && !providers.openrouterKey) throw configError("No Gemini API key. Add your free key in ⚙ Settings.");
   const img = await prepareImage(blob);
   const { text, model: used } = await callModel(apiKey, model, {
     contents: [{ role: "user", parts: [{ inline_data: { mime_type: "image/jpeg", data: img.data } }, { text: instruction }] }],

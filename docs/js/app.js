@@ -3,10 +3,10 @@
 import * as db from "./db.js";
 import { DEFAULT_PRODUCTS, shake, recentFoods, normFoodLabel, EXERCISES, e1rm, liftProgress, cleanBackfillLabel } from "./foods.js";
 import * as eng from "./engine.js";
-import { estimate as runGemini, readLabel, readWorkout, prepareImage, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
+import { estimate as runGemini, readLabel, readWorkout, prepareImage, providers, DEFAULT_MODEL, RETIRED_MODELS } from "./estimate.js";
 import * as sync from "./sync.js";
 import { detectBarcode, lookupBarcode, unitFor, normalizeServing } from "./barcode.js";
-import { parseWorkoutText, groupSets, groupText, setsSummary } from "./workout.js";
+import { parseWorkoutText, groupSets, groupText, setsSummary, workoutKcal, EFFORTS } from "./workout.js";
 import { roughGuess } from "./guess.js";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -101,6 +101,10 @@ async function loadDay(day = state.day) {
   const meals = (await db.byIndex("meals", "day", day)).sort((a, b) => a.at.localeCompare(b.at));
   const workouts = (await db.byIndex("workouts", "day", day)).sort((a, b) => a.at.localeCompare(b.at));
   const allMeals = await db.all("meals"), allBody = await db.all("body"), allWorkouts = await db.all("workouts");
+  // session burn is weight × time × MET: the latest weigh-in is the weight
+  const lastBody = allBody.reduce((a, b) => (!a || b.at > a.at ? b : a), null);
+  if (lastBody) s.body_kg = String(lastBody.weight_kg);
+  providers.openrouterKey = s.or_key || ""; providers.tavilyKey = s.tavily_key || ""; providers.referer = location.origin + location.pathname;
   const totals = { kcal: 0, lo: 0, hi: 0, protein: 0, whey: 0 };
   for (const m of meals) { totals.kcal += m.kcal; totals.lo += m.kcal_lo; totals.hi += m.kcal_hi; totals.protein += m.protein_g; if (m.source === "shake" || /whey/i.test(m.label || "")) totals.whey += m.protein_g; }
   const exp = eng.estimateExpenditure(allMeals, allBody, s, todayStr(), 21, allWorkouts);
@@ -200,7 +204,8 @@ function render() {
       li.onclick = () => openRow(r, "meal");
     } else {
       li.className = "workout";
-      li.innerHTML = `<span class="ic">${icon("lift")}</span><span class="l"><b>${labelKind(r.kind)}</b><small>${esc([time, workoutLine(r, { kcal: false })].filter(Boolean).join(" · "))}</small></span><span class="n"><b>${r.kcal ? fmt(r.kcal) : fmt(eng.sessionKcal(r, state.settings))}</b><small>${r.kcal ? "kcal" : "kcal · default"}</small></span>`;
+      const burn = workoutKcal(r, state.settings);
+      li.innerHTML = `<span class="ic">${icon("lift")}</span><span class="l"><b>${labelKind(r.kind)}</b><small>${esc([time, workoutLine(r, { kcal: false })].filter(Boolean).join(" · "))}</small></span><span class="n"><b>${burn.source === "estimate" ? "~" : ""}${fmt(burn.kcal)}</b><small>${burn.source === "measured" ? "kcal" : burn.source === "estimate" ? "kcal · est." : "kcal · default"}</small></span>`;
       li.onclick = () => openRow(r, "workout");
     }
     log.appendChild(li);
@@ -431,7 +436,7 @@ async function withModelFallback(fn) {
 }
 // the model that last answered goes first, so a model that is down for days costs one failed call, not one per meal
 const modelToUse = () => state.settings.ai_model_ok || state.settings.ai_model || DEFAULT_MODEL;
-async function rememberModel(m) { if (m && m !== modelToUse()) { await db.setSetting("ai_model_ok", m); state.settings.ai_model_ok = m; } }
+async function rememberModel(m) { if (m && !m.startsWith("openrouter:") && m !== modelToUse()) { await db.setSetting("ai_model_ok", m); state.settings.ai_model_ok = m; } }
 
 const rawText = (m) => { let d = m.detail; if (typeof d === "string") { try { d = JSON.parse(d); } catch { d = null; } } return d?.raw || m.label; };
 const looksPartial = (m) => m.source === "backfill" && m.kcal < 150 && rawText(m).length > 25;
@@ -447,11 +452,12 @@ async function runEstimate(correction = null) {
     await rememberModel(out.model);
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share: state.share, model: out.model, ident: out.ident, result: out.result,
-      thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null };
+      thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null,
+      sources: out.sources?.length ? out.sources : (prior?.sources || []), lookup_error: out.lookup_error || null };
     row.id = await db.add("estimates", row);
     state.est = { ...row, images: out.images.length ? out.images : (prior ? prior.images : state.fixImages) };
     renderEstimate();
-    const u = out.usage; $("#est-status").textContent = `${row.model} · ${fmt((u.promptTokenCount || 0) + (u.candidatesTokenCount || 0))} tokens · free tier`;
+    const u = out.usage; $("#est-status").textContent = `${row.model.startsWith("openrouter:") ? `backup AI (${row.model.split("/").pop().replace(":free", "")}) — Gemini was down` : row.model} · ${fmt((u.promptTokenCount || 0) + (u.candidatesTokenCount || 0))} tokens · free`;
     if (!state.fixing) retryPending({ force: true });                // Gemini answers again: settle anything parked
   } catch (e) {
     if (prior) { renderEstimate(); $("#est-status").textContent = "Refine failed — " + e.message; return; }   // the earlier estimate stands
@@ -487,6 +493,7 @@ async function parkEstimate(text, err) {
   toast(guess
     ? `Google's AI is overloaded right now. Logged a rough guess — ${fmt(guess.kcal)} kcal · ${fmt(guess.protein_g, 0)} g, from ${guess.basis === "history" ? `${guess.from.length} of your past meals like it` : "the reference table"}${logged ? ` — plus ${logged} item${logged === 1 ? "" : "s"}` : ""}. It gets refined on its own when the AI is back.`
     : `Google's AI is overloaded right now — ${logged ? `${logged} item${logged === 1 ? "" : "s"} added, the rest is ` : "it's "}in the log to be valued when it's back. Tap the row to type it in.`, 6000);
+  if (!state.settings.or_key) setTimeout(() => toast("Tip: add a free backup AI key (OpenRouter) in Settings — it answers when Gemini can't.", 5000), 6200);
   resetEstimate(); closeSheets(); changed();
 }
 
@@ -543,6 +550,8 @@ function renderEstimate() {
     ${r.model_share > 0.5 ? `<p><b>Note:</b> most of this came from the model's own figures, not the reference table — treat as rough.</p>` : ""}
     ${r.assumptions?.length ? `<p><b>Assumed:</b> ${esc(r.assumptions.join("; "))}</p>` : ""}
     ${r.grounding?.length ? `<p><b>Based on:</b> ${esc(r.grounding.join("; "))}</p>` : ""}
+    ${e.sources?.length ? `<p><b>Searched:</b> ${e.sources.map(x => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.host)}</a>`).join(" · ")}</p>` : ""}
+    ${e.lookup_error ? `<p><b>Search:</b> ${esc(e.lookup_error)}</p>` : ""}
     ${r.tighten ? `<p><b>Would tighten it:</b> ${esc(r.tighten)}</p>` : ""}
     <div class="refine"><input class="text" id="est-refine" placeholder="Correct it — “only ate half the rice”"><button class="btn" id="est-refine-go">Refine</button></div>
   </div>`;
@@ -621,16 +630,24 @@ function openRow(r, kind) {
   } else {
     body.innerHTML = `<div class="rowsheet">
       <p class="meta">${r.at.slice(0, 10)} · ${esc(workoutLine(r) || "—")}</p>
+      <p class="note" id="rw-burn"></p>
       <div class="row gap">
-        <label class="lbl">kcal <input class="num" id="rw-kcal" type="number" step="1" value="${r.kcal || ""}" placeholder="default" inputmode="decimal"></label>
+        <label class="lbl">minutes <input class="num" id="rw-min" type="number" min="1" step="1" value="${r.duration_min || ""}" placeholder="${r.sets?.length ? "from sets" : ""}" inputmode="numeric"></label>
+        <label class="lbl">kcal <input class="num" id="rw-kcal" type="number" step="1" value="${r.kcal || ""}" placeholder="estimate" inputmode="decimal"></label>
         <label class="lbl">time <input class="num" id="rw-time" type="time" value="${r.at.slice(11, 16)}"></label>
       </div>
+      <div class="share-row"><span class="label">Effort</span><div class="seg" id="rw-effort">${EFFORTS.map(x => `<button type="button" data-v="${x}" class="${(r.effort || "moderate") === x ? "on" : ""}">${x[0].toUpperCase() + x.slice(1)}</button>`).join("")}</div></div>
       <label class="lbl">note <input class="text" id="rw-note" value="${esc(r.detail || "")}"></label>
       <div class="row gap"><button class="btn danger" id="rw-del">Delete</button><button class="btn primary grow" id="rw-save">Save</button></div>
     </div>`;
+    let effort = r.effort || "moderate";
+    const draft = () => { const k = parseFloat($("#rw-kcal").value), m = parseFloat($("#rw-min").value);
+      return { ...r, kcal: Number.isFinite(k) && k > 0 ? k : null, duration_min: Number.isFinite(m) && m > 0 ? m : null, effort }; };
+    const showBurn = () => { const b = workoutKcal(draft(), state.settings); $("#rw-burn").textContent = `${b.source === "estimate" ? "≈ " : ""}${fmt(b.kcal)} kcal — ${b.why}.${b.source === "estimate" ? " Source: 2024 Compendium of Physical Activities." : ""}`; };
+    $$("#rw-effort button").forEach(b => b.onclick = () => { effort = b.dataset.v; $$("#rw-effort button").forEach(x => x.classList.toggle("on", x === b)); showBurn(); });
+    ["rw-min", "rw-kcal"].forEach(id => $("#" + id).addEventListener("input", showBurn)); showBurn();
     $("#rw-save").onclick = async () => {
-      const kcal = parseFloat($("#rw-kcal").value);
-      await db.put("workouts", { ...r, kcal: Number.isFinite(kcal) && kcal > 0 ? kcal : null, detail: $("#rw-note").value.trim() || null, at: `${r.day}T${$("#rw-time").value || r.at.slice(11, 16)}+08:00` });
+      await db.put("workouts", { ...draft(), detail: $("#rw-note").value.trim() || null, at: `${r.day}T${$("#rw-time").value || r.at.slice(11, 16)}+08:00` });
       d.close(); toast("Saved"); changed();
     };
     $("#rw-del").onclick = async () => { await db.del("workouts", r.id); d.close(); toast("Removed"); changed(); };
@@ -717,8 +734,8 @@ function renderWorkoutSheet() {
   const strength = state.wo.kind === "lift";
   $("#wo-cardio").hidden = strength; $("#wo-strength").hidden = !strength;
   $("#wo-km").parentElement.hidden = !/run|swim|cycle|walk|ride|hike|row/i.test(state.wo.kind + " " + labelKind(state.wo.kind));
-  const dflt = parseFloat(state.settings["burn_" + state.wo.kind] || state.settings.burn_other || 0);
-  $("#wo-burn-note").textContent = `Without a kcal figure, ${labelKind(state.wo.kind)} counts as ${fmt(dflt)} kcal (change it in Settings). A screenshot with calories overrides it.`;
+  $$("#wo-effort button").forEach(b => b.classList.toggle("on", b.dataset.v === (state.wo.effort || "moderate")));
+  renderWoEst();
   // suggestions: the standard list plus every exercise you have logged
   const names = [...new Set([...EXERCISES, ...(state.all?.workouts || []).flatMap(w => (w.sets || []).map(s => s.exercise))])].filter(Boolean);
   $("#wo-ex-list").innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join("");
@@ -767,19 +784,31 @@ $("#wo-shot").addEventListener("change", async (e) => {
     $("#wo-shot-status").textContent = `${W.app || "screenshot"} · ${W.confidence}${W.date && W.date !== state.day ? ` · dated ${W.date}` : ""}`;
   } catch (err) { $("#wo-shot-status").textContent = err.message; }
 });
+/** The session as it would be logged right now — the same object the estimate line and the log use. */
+function woDraft() {
+  const kind = state.wo.kind, row = { kind, effort: state.wo.effort || "moderate" };
+  const num = (id) => { const v = parseFloat($("#" + id).value); return Number.isFinite(v) && v > 0 ? v : null; };
+  if (kind === "lift") { row.sets = state.wo.sets.slice(); if (num("wo-smin")) row.duration_min = num("wo-smin"); }
+  else { if (num("wo-kcal")) row.kcal = num("wo-kcal"); if (num("wo-min")) row.duration_min = num("wo-min"); if (num("wo-km")) row.distance_km = num("wo-km"); }
+  return row;
+}
+function renderWoEst() {
+  const d = woDraft(), el = $("#wo-est");
+  if (d.kind === "lift" && !d.sets.length) { el.textContent = "Add sets and the burn is worked out from them — the 2024 Compendium of Physical Activities, your weight, and the time the sets take."; return; }
+  const b = workoutKcal(d, state.settings);
+  el.textContent = b.source === "measured" ? `Using your ${fmt(b.kcal)} kcal (watch / Strava).`
+    : b.source === "estimate" ? `≈ ${fmt(b.kcal)} kcal — ${b.why}. Source: 2024 Compendium of Physical Activities. A watch or Strava figure replaces it.`
+    : `Counts as ${fmt(b.kcal)} kcal — ${b.why}.`;
+}
+$$("#wo-effort button").forEach(b => b.onclick = () => { state.wo.effort = b.dataset.v; $$("#wo-effort button").forEach(x => x.classList.toggle("on", x === b)); renderWoEst(); });
+["wo-min", "wo-km", "wo-kcal", "wo-smin"].forEach(id => $("#" + id).addEventListener("input", renderWoEst));
 $("#wo-log").onclick = async () => {
   const kind = state.wo.kind, at = atFor();
-  const row = { day: at.slice(0, 10), at, kind, detail: $("#wo-note").value.trim() || null, source: "manual" };
-  if (kind === "lift") { if (!state.wo.sets.length) return toast("Add at least one set"); row.sets = state.wo.sets.slice(); }
-  else {
-    const kcal = parseFloat($("#wo-kcal").value), min = parseFloat($("#wo-min").value), km = parseFloat($("#wo-km").value);
-    if (Number.isFinite(kcal) && kcal > 0) row.kcal = kcal;
-    if (Number.isFinite(min) && min > 0) row.duration_min = min;
-    if (Number.isFinite(km) && km > 0) row.distance_km = km;
-    if (state.wo.shot) row.shot = state.wo.shot;
-  }
+  if (kind === "lift" && !state.wo.sets.length) return toast("Add at least one set");
+  const row = { day: at.slice(0, 10), at, ...woDraft(), detail: $("#wo-note").value.trim() || null, source: "manual" };
+  if (kind !== "lift" && state.wo.shot) row.shot = state.wo.shot;
   await db.add("workouts", row);
-  state.wo = { kind, sets: [], shot: null }; ["wo-min", "wo-km", "wo-kcal", "wo-note", "wo-w", "wo-r", "wo-exercise", "wo-paste"].forEach(id => ($("#" + id).value = "")); $("#wo-n").value = 3; $("#wo-shot-status").textContent = ""; $("#wo-parse-note").textContent = "";
+  state.wo = { kind, sets: [], shot: null, effort: row.effort }; ["wo-min", "wo-km", "wo-kcal", "wo-smin", "wo-note", "wo-w", "wo-r", "wo-exercise", "wo-paste"].forEach(id => ($("#" + id).value = "")); $("#wo-n").value = 3; $("#wo-shot-status").textContent = ""; $("#wo-parse-note").textContent = "";
   toast(`${labelKind(kind)} logged`); closeSheets(); changed();
 };
 
@@ -964,6 +993,8 @@ $("#import-file").addEventListener("change", async (e) => {
 // ------------------------------------------------------------ settings
 const SETTINGS = [
   ["gemini_key", "Gemini API key (free, aistudio.google.com)", "password"], ["ai_model", "Gemini model", "text"],
+  ["or_key", "Backup AI key — OpenRouter (free, openrouter.ai/keys)", "password"],
+  ["tavily_key", "Web search key — Tavily (free, app.tavily.com)", "password"],
   ["gh_repo", "GitHub data repo (owner/name)", "text"], ["gh_token", "GitHub token (Contents read/write)", "password"], ["backup_auto", "Auto-backup after changes (1/0)", "text"],
   ["protein_floor_g", "Protein floor (g)", "text"], ["protein_ceiling_g", "Protein ceiling (g)", "text"],
   ["weight_lo_kg", "Weight low (kg)", "text"], ["weight_hi_kg", "Weight high (kg)", "text"],
@@ -997,7 +1028,7 @@ $("#btn-wipe").onclick = async () => {
 };
 $("#btn-settings").onclick = async () => {
   const s = await db.allSettings();
-  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || k === "ai_model" ? "wide" : ""}">${l.replace("(kg)", `(${unit()})`)}<input class="num" type="${type}" name="${k}" value="${esc(k.startsWith("weight_") && s[k] ? fmt(toUnit(parseFloat(s[k])), 1) : (s[k] ?? ""))}" autocomplete="off"></label>`).join("");
+  $("#settings-fields").innerHTML = SETTINGS.map(([k, l, type]) => `<label class="lbl ${k.startsWith("g") || /^(ai_model|or_key|tavily_key)$/.test(k) ? "wide" : ""}">${l.replace("(kg)", `(${unit()})`)}<input class="num" type="${type}" name="${k}" value="${esc(k.startsWith("weight_") && s[k] ? fmt(toUnit(parseFloat(s[k])), 1) : (s[k] ?? ""))}" autocomplete="off"></label>`).join("");
   renderKindsEditor(kinds());
   $("#settings").showModal();
 };

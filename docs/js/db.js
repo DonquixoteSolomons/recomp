@@ -94,7 +94,7 @@ export const DEFAULT_SETTINGS = {
   gh_repo: "", backup_auto: "1",
 };
 // Never written to backup.json — a backup must not carry the token that protects it.
-export const CREDENTIAL_KEYS = ["gh_token", "gemini_key"];
+export const CREDENTIAL_KEYS = ["gh_token", "gemini_key", "or_key", "tavily_key"];
 export async function ensureDefaults() {
   const have = await allSettings();
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) if (!(k in have)) await setSetting(k, v);

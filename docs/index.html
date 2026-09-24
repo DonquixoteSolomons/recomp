@@ -214,7 +214,7 @@
         <label class="btn filebtn"><input type="file" id="wo-shot" accept="image/*" hidden><svg><use href="#i-image"/></svg>From screenshot</label>
         <span class="status" id="wo-shot-status"></span>
       </div>
-      <p class="note" id="wo-burn-note"></p>
+
     </div>
     <div id="wo-strength" class="stack" hidden>
       <div class="card-head"><span class="label">This session</span><span class="muted" id="wo-count"></span></div>
@@ -232,8 +232,11 @@
         <label class="lbl">kg <input class="num" id="wo-w" type="number" min="0" step="0.5" placeholder="body" inputmode="decimal"></label>
       </div>
       <button class="btn block" type="button" id="wo-addset"><svg><use href="#i-plus"/></svg>Add sets</button>
-      <p class="note">Reps can be <b>15</b>, <b>30s</b> for a hold, or <b>10/side</b>. Leave kg blank for bodyweight; a vest or dumbbell is the kg. Calisthenics, weights and core all go here — calories use the Strength default unless you edit the entry.</p>
+      <label class="lbl">minutes, if you timed it <input class="num" id="wo-smin" type="number" min="1" step="1" placeholder="worked out from your sets" inputmode="numeric"></label>
+      <p class="note">Reps can be <b>15</b>, <b>30s</b> for a hold, or <b>10/side</b>. Leave kg blank for bodyweight; a vest or dumbbell is the kg. Calisthenics, weights and core all go here; the burn is worked out from your sets below.</p>
     </div>
+    <div class="share-row"><span class="label">Effort</span><div class="seg" id="wo-effort"><button type="button" data-v="easy">Easy</button><button type="button" data-v="moderate" class="on">Moderate</button><button type="button" data-v="hard">Hard</button></div></div>
+    <p class="note" id="wo-est"></p>
     <input class="text" id="wo-note" placeholder="note (optional) — “testing week”, “white scale”">
   </div>
   <div class="sheet-foot"><button class="btn primary purple block" id="wo-log">Log workout</button></div>
@@ -273,6 +276,7 @@
     <div class="sheet-head"><span class="grip"></span><h2>Settings</h2><button class="icon close" value="cancel" formnovalidate aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
     <div class="sheet-body">
       <div class="grid2" id="settings-fields"></div>
+      <p class="note">All three keys are free and stay on this phone (never in backups). <b>Gemini</b> does the estimates. <b>OpenRouter</b> is a second, independent AI that answers when every Gemini model is down — sign up at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>, 50 free requests a day. <b>Tavily</b> searches the web when you name a place — its menu, published nutrition, and other people's calorie counts — at <a href="https://app.tavily.com" target="_blank" rel="noopener">app.tavily.com</a>, 1,000 free searches a month.</p>
       <div class="card-head"><h3>Workout kinds</h3><span class="muted">default kcal when none is given</span></div>
       <div id="kinds-editor" class="stack"></div>
       <button class="btn ghost" type="button" id="btn-addkind"><svg><use href="#i-plus"/></svg>Add a workout kind</button>

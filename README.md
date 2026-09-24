@@ -182,8 +182,14 @@ components and maps each to a row in the app's Singapore reference table
 (`docs/js/foods.js`, ~70 hawker dishes and components). The **app** does the
 arithmetic from that table — deterministic, same answer every time. The model
 only supplies its own figures for things the table doesn't know, and those
-are flagged. Name the venue and the model uses the published figures it knows
-for chains; Google-grounded search is not on the free tier for the 3.x models.
+are flagged. Name the venue ("from Dragonfly at Bangkit") and, with a free
+Tavily key, one web search pulls the place's menu, published nutrition,
+food-database entries and other people's own calorie counts into the
+estimate; the card lists the sites it used, and a place you go back to is
+answered from a 30-day cache. (Gemini's own grounded search is not on the free
+tier for the 3.x models.) With a free OpenRouter key, a second, independent AI
+(Gemma 4 or Qwen, 50 free requests a day) answers when every Gemini model is
+down — before the meal would otherwise be parked.
 Free-tier quotas are per model per day: when one is used up, or a model is
 overloaded (503), the app tries the next Flash model and remembers which one
 answered. If none does, the meal still goes into the log at once as an
@@ -195,7 +201,13 @@ or you tap the row and type it in. A logged meal is never lost to an outage.
 
 **Sessions move calories between days; they never inflate the week.** Each
 logged workout raises *that day's* target by its burn — measured kcal when you
-have it, else a per-kind default (Settings). Before the engine has data,
+have it, else an estimate from the 2024 Compendium of Physical Activities:
+(MET − 1) × your weight × the duration, net of what the hour would have burned
+sitting. Strength sessions get their duration from the sets (reps, holds,
+per side, rest) and their MET from what the sets are — calisthenics 3.8, core
+and calf work 2.8, weights 5.0 at moderate effort; easy and hard use the
+Compendium's other rows. Runs, walks and rides use the Compendium's speed
+tables. Your own classes keep the figure you set for them. Before the engine has data,
 `provisional_kcal` is the **rest-day base**. Once measured, the engine takes
 the sessions you actually logged in the window back out of the measured
 average to get a rest-day base, then adds each session back on the day it

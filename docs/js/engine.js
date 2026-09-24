@@ -6,6 +6,8 @@
    slope on raw readings (an EMA endpoint lags a steady drift by ~1/alpha days).
    Days inside the creatine settling window are excluded from the weight side. */
 
+import { workoutKcal } from "./workout.js";
+
 export const KCAL_PER_KG = 7700;
 export const EMA_ALPHA = 0.10;
 export const MIN_DAYS = 7;
@@ -50,13 +52,8 @@ export function weightTrend(bodyRows, settings, alpha = EMA_ALPHA) {
   return out;
 }
 
-/** Estimated burn of one logged session, from settings (per workout kind). */
-export function sessionKcal(workout, settings) {
-  const measured = parseFloat(workout.kcal);
-  if (Number.isFinite(measured) && measured > 0) return measured;     // from a watch / Strava screenshot
-  const v = parseFloat(settings["burn_" + workout.kind]);
-  return Number.isFinite(v) ? v : parseFloat(settings.burn_other || "0") || 0;
-}
+/** Burn of one logged session: measured if given, else the Compendium estimate (workout.js), else the per-kind figure. */
+export const sessionKcal = (workout, settings) => workoutKcal(workout, settings).kcal;
 
 /** Last 7 days at a glance. */
 export function weekSummary(meals, workouts, bodyRows, settings, asOf) {
