@@ -152,7 +152,15 @@ open as sheets with the one primary action pinned at the bottom:
   serving size (said so on the card, with a **Read the label** button that takes
   the real serving, and the numbers, from a photo of the panel). Photos and text
   go to the model with the packaged items named as already counted, so nothing
-  is counted twice. **Camera**, **Gallery** (pick existing
+  is counted twice. Everything added in one go is **one meal** in the log —
+  "Ayam penyet + Coke Zero · 2 items", named by its biggest part, with the
+  totals — and tapping it shows the parts, each editable on its own, plus
+  *Log it again* and *Delete meal*. (Rows from before this, saved in the same
+  minute, are shown as one meal too.) An item with no amount is never dropped
+  silently: Add stops and asks how much. A picked photo shows as a large
+  thumbnail with a count and a ×, the button says "Estimate 1 photo", and the
+  photo is kept in a draft on the phone, so if Android reloads the app while
+  the camera is open the sheet comes back as it was. **Camera**, **Gallery** (pick existing
   photos), or **Label** (a nutrition panel → exact values, then how much you
   had). A scan is a barcode (Open Food Facts, no key) with the printed panel
   as the fallback. Describe it, set your share (All / ½ / ⅓ / ¼), **Estimate**.

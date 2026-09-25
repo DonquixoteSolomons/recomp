@@ -382,3 +382,25 @@ canvas{width:100%;display:block;border-radius:var(--r-s);background:var(--sunken
 .item .qty .num{min-height:40px;padding:6px 10px}
 .item .out{grid-column:1 / -1;text-align:right;font-size:15px;font-weight:900}
 .item .out .p{color:var(--green-ink)}
+
+/* photos picked for a meal: big enough to see, a count, and a way to take one back */
+#est-thumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;overflow:visible}
+#est-thumbs .shot{position:relative;flex:none}
+#est-thumbs .shot img{width:96px;height:96px;object-fit:cover;border-radius:var(--r-s);border:2px solid var(--green);display:block}
+#est-thumbs .shot .x{position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;background:var(--card);border:2px solid var(--line);display:grid;place-items:center;color:var(--muted)}
+#est-thumbs .shot .x svg{width:14px;height:14px}
+#est-thumbs .shot-count{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:800;color:var(--green-ink)}
+#est-thumbs .shot-count svg{width:18px;height:18px;stroke-width:3}
+.btn.tile{position:relative}
+.btn.tile.has{border-color:var(--green);background:var(--green-bg)}
+.btn.tile .badge:empty{display:none}
+.btn.tile .badge{position:absolute;top:6px;right:6px;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--green);color:#fff;font-size:12px;font-weight:900;display:grid;place-items:center;letter-spacing:0}
+/* a meal of several parts: one row with a count on its icon; its parts in the meal sheet */
+.log li .ic{position:relative}
+.log li .ic .count{position:absolute;right:-4px;bottom:-4px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:var(--green);color:#fff;font-style:normal;font-size:11px;font-weight:900;display:grid;place-items:center;border:2px solid var(--card)}
+.log li.pending .ic .count{background:var(--orange)}
+.log.parts li{grid-template-columns:36px 1fr auto}
+.log.parts .ic{width:36px;height:36px}
+.log.parts .ic svg{width:18px;height:18px}
+.log.parts .l b{white-space:normal}
+.log li.group .l b{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}

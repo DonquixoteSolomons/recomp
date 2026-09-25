@@ -36,7 +36,7 @@ export function parseOff(json) {
   const perPack = servingQty && packQty && servingQty > 0 ? Math.round(packQty / servingQty * 10) / 10 : null;
   if (kcal100 != null) {
     return { product: name || `Barcode ${json.code || ""}`.trim(), kind: liquid ? "drink" : "food", basis: liquid ? "100ml" : "100g",
-      serving_size: p.serving_size || null, serving_g_or_ml: servingQty, quantity: p.quantity || null, kcal: Math.round(kcal100), protein_g: Math.round((prot100 ?? 0) * 10) / 10,
+      serving_size: p.serving_size || null, serving_g_or_ml: servingQty, quantity: p.quantity || null, kcal: kcal100 < 10 ? Math.round(kcal100 * 10) / 10 : Math.round(kcal100), protein_g: Math.round((prot100 ?? 0) * 10) / 10,
       servings_per_pack: perPack, confidence: "high", via: "barcode", code: json.code || null };
   }
   if (kcalServ != null) {
@@ -62,7 +62,7 @@ const TYPICAL = [
   [/nugget|meatball|dumpling|siu ?mai|wonton/i, "piece", 20],
   [/tuna|sardine|mackerel|\bcanned\b|\btinned\b|\bcan\b|\btin\b|soup|baked beans/i, "can", null],
   [/noodle|ramen|instant/i, "pack", null],
-  [/milk|juice|soda|cola|drink|\btea\b|coffee|water|yakult|beer|kombucha/i, "bottle", null],
+  [/milk|juice|soda|cola|coke|pepsi|sprite|fanta|100 ?plus|red ?bull|monster|drink|\btea\b|coffee|water|yakult|beer|kombucha|isotonic/i, "bottle", null],
   [/yog(h)?urt|pudding|dessert/i, "cup", null],
   [/\bbar\b/i, "bar", null],
 ];
@@ -102,7 +102,7 @@ export function unitFor(L) {
   if (noun && !servG && num(noun[1]) > 0 && L?.basis === "serving") return { name: one(noun[2]), grams: null, perServing: num(noun[1]), source: "pack", step: 1, printed: ss };
   for (const [re, unit, typical] of TYPICAL) {
     if (!re.test(name)) continue;
-    if (typical == null) { if (packG && packG <= 600) return { name: unit, grams: packG, source: "pack", step: 0.25, printed: ss }; continue; }
+    if (typical == null) { if (packG && packG <= 600) return { name: unit === "bottle" && packG <= 355 && !/yakult|milk/i.test(name) ? "can" : unit, grams: packG, source: "pack", step: 0.25, printed: ss }; continue; }
     return { name: unit, grams: typical, perServing: null, source: "typical", step: 1, printed: ss };
   }
   if (servG) return { name: "serving", grams: servG, perServing: 1, source: "pack", step: 0.5, printed: ss };

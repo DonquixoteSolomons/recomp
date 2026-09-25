@@ -73,3 +73,14 @@ test("serving text in Thai, Chinese, Malay or Japanese reads the same as English
   assert.equal(unitFor({ product: "Susu", basis: "100ml", serving_size: "1 botol (250 มล.)" }).name, "bottle");
   assert.equal(unitFor({ product: "Nasi", basis: "serving", serving_size: "1 หน่วยบริโภค (200 กรัม)" }).name, "serving");
 });
+
+test("soft drinks count in cans or bottles, whatever the brand calls itself", () => {
+  assert.deepEqual([unitFor({ product: "Coke Zero", quantity: "320 ml" }).name, unitFor({ product: "Coke Zero", quantity: "320 ml" }).grams], ["can", 320]);
+  assert.equal(unitFor({ product: "100PLUS Original", quantity: "325 ml" }).name, "can");
+  assert.equal(unitFor({ product: "Pokka Green Tea", quantity: "500 ml" }).name, "bottle");
+  assert.equal(unitFor({ product: "Yakult Ace", quantity: "100 ml" }).name, "bottle");
+});
+
+test("a zero-calorie drink keeps its small figure instead of rounding to nothing", () => {
+  assert.equal(parseOff({ code: "1", status: 1, product: { product_name: "Coke Zero", quantity: "320 ml", nutriments: { "energy-kcal_100g": 0.3, proteins_100g: 0 } } }).kcal, 0.3);
+});

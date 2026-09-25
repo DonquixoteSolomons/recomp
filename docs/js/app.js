@@ -26,7 +26,7 @@ const fromUnit = (x) => unit() === "lb" ? x / 2.20462 : x;
 const wfmt = (kg, dp = 1) => `${fmt(toUnit(kg), dp)} ${unit()}`;
 
 const state = { day: todayStr(), settings: {}, data: null, tab: "today", trend: null, products: [],
-  est: null, estFiles: [], fixing: null, fixImages: [], share: 1, items: [], wo: { kind: null, sets: [], shot: null } };
+  est: null, shots: [], fixing: null, fixImages: [], share: 1, items: [], wo: { kind: null, sets: [], shot: null } };
 
 let toastT;
 function toast(msg, ms = 1800, kind = null) {
@@ -189,12 +189,23 @@ function render() {
   ];
   $("#goals").innerHTML = goals.map(g => `<li class="${g.done ? "done" : ""}${g.opt && !g.done ? " opt" : ""}"><span class="box">${g.done ? icon("check") : ""}</span>${esc(g.label)}</li>`).join("");
 
-  const rows = [...d.meals.map(m => ({ ...m, _t: "meal" })), ...d.workouts.map(w => ({ ...w, _t: "workout" }))].sort((a, b) => a.at.localeCompare(b.at));
-  $("#log-count").textContent = `${d.meals.length} meal${d.meals.length === 1 ? "" : "s"} · ${d.workouts.length} workout${d.workouts.length === 1 ? "" : "s"}`;
+  // one meal = the rows added together: the same meal_group, or (rows from before groups existed) the same minute; a shake stands alone
+  const byMeal = new Map();
+  for (const m of d.meals) { const k = m.source === "shake" ? "s" + m.id : m.meal_group || "t" + m.at; if (!byMeal.has(k)) byMeal.set(k, []); byMeal.get(k).push(m); }
+  // the biggest part names the meal: "Ayam penyet + Coke Zero", not the order things were scanned in
+  const mealRows = [...byMeal.values()].map(g => g.length > 1 ? { _t: "group", at: g.reduce((a, m) => (m.at < a ? m.at : a), g[0].at), items: g.slice().sort((a, b) => (b.kcal || 0) - (a.kcal || 0)) } : { ...g[0], _t: "meal" });
+  const rows = [...mealRows, ...d.workouts.map(w => ({ ...w, _t: "workout" }))].sort((a, b) => a.at.localeCompare(b.at));
+  $("#log-count").textContent = `${mealRows.length} meal${mealRows.length === 1 ? "" : "s"} · ${d.workouts.length} workout${d.workouts.length === 1 ? "" : "s"}`;
   const log = $("#log"); log.innerHTML = rows.length ? "" : `<li class="empty">Nothing logged yet — Meal, Shake or Workout below.</li>`;
   for (const r of rows) {
     const li = document.createElement("li"), time = (r.at || "").slice(11, 16);
-    if (r._t === "meal") {
+    if (r._t === "group") {
+      const g = r.items, unvalued = g.some(m => m.source === "pending" && !(m.kcal > 0)), rough = g.some(m => m.source === "pending" && m.kcal > 0);
+      const p = g.reduce((a, m) => a + (m.protein_g || 0), 0), k = g.reduce((a, m) => a + (m.kcal || 0), 0), pre = rough ? "~" : "", post = unvalued ? " +?" : "";
+      li.className = unvalued || rough ? "pending group" : "group";
+      li.innerHTML = `<span class="ic">${icon("meal")}<i class="count">${g.length}</i></span><span class="l"><b>${esc(mealName(g))}</b><small>${esc([time, `${g.length} items`, unvalued ? "part waiting for AI" : rough ? "part is a rough guess" : null].filter(Boolean).join(" · "))}</small></span><span class="n"><b>${pre}${fmt(p, 0)} g${post}</b><small>${pre}${fmt(k)} kcal${post}</small></span>`;
+      li.onclick = () => openMeal(g);
+    } else if (r._t === "meal") {
       const parked = r.source === "pending", isShake = r.source === "shake";
       li.className = parked ? "pending" : isShake ? "shake" : "";
       const rough = parked && r.kcal > 0;
@@ -226,10 +237,12 @@ function showTab(name) { const t = $$(".tab").find(x => x.dataset.tab === name);
 
 // ------------------------------------------------------------ meals
 /** share scales the numbers; share_frac is what the row shows (defaults to share; pass it when the numbers are already scaled). */
-async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, share_frac = share, venue = null, detail = null, needs_review = 0, hm = null }) {
-  const at = atFor(hm);
+/** One Add can log several rows (scanned items + the estimated rest): they share a meal_group and show as one meal. */
+const newGroup = () => "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+async function insertMeal({ label, kcal, lo, hi, protein, source, share = 1, share_frac = share, venue = null, detail = null, needs_review = 0, hm = null, group = null, at = null }) {
+  at = at || atFor(hm);
   return db.add("meals", { day: at.slice(0, 10), at, label, kcal: Math.round(kcal * share), kcal_lo: Math.round(lo * share), kcal_hi: Math.round(hi * share),
-    protein_g: Math.round(protein * share * 10) / 10, source, share_frac, venue, detail, needs_review });
+    protein_g: Math.round(protein * share * 10) / 10, source, share_frac, venue, detail, needs_review, ...(group ? { meal_group: group } : {}) });
 }
 
 // recents: what you actually repeat
@@ -270,31 +283,66 @@ $("#est-text").addEventListener("input", renderRecall);
 $$("#est-share button").forEach(b => b.onclick = () => { $$("#est-share button").forEach(x => x.classList.toggle("on", x === b)); state.share = parseFloat(b.dataset.v); });
 
 // photos
-function onPhotos(e) {
-  state.estFiles = [...state.estFiles, ...e.target.files].slice(0, 4);
-  const t = $("#est-thumbs"); t.innerHTML = "";
-  for (const f of state.estFiles) { const img = document.createElement("img"); img.src = URL.createObjectURL(f); img.alt = ""; t.appendChild(img); }
-  e.target.value = "";
+/* Photos are read and shrunk the moment they're picked, shown big with a count and a ×, and kept in a
+   draft on the phone — Android sometimes reloads a web app while the camera is open, and a photo that
+   only lived in memory was simply gone. The draft brings the sheet back as it was. */
+async function onPhotos(e) {
+  const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+  $("#est-status").textContent = `reading ${files.length > 1 ? `${files.length} photos` : "the photo"}…`;
+  let bad = 0;
+  for (const f of files) {
+    if (state.shots.length >= 4) { toast("Four photos is the most one meal takes"); break; }
+    try { state.shots.push(await prepareImage(f)); } catch { bad++; }
+  }
+  $("#est-status").textContent = bad ? `Couldn't open ${bad} photo${bad > 1 ? "s" : ""} — if your camera saves HEIF, switch it to JPEG, or take a screenshot of it.` : "";
+  renderShots(); setMealFoot(); await saveDraft();
+  if (state.shots.length) { toast(`Photo${state.shots.length > 1 ? "s" : ""} added — ${state.shots.length} ready`, 1800, "good"); $("#est-thumbs").scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 }
-$("#est-photo").addEventListener("change", (e) => { onPhotos(e); setMealFoot(); });
+function renderShots() {
+  const t = $("#est-thumbs"), n = state.shots.length;
+  t.innerHTML = n ? state.shots.map((s, i) => `<div class="shot"><img src="data:image/jpeg;base64,${s.thumb}" alt="Photo ${i + 1}"><button class="x" data-i="${i}" aria-label="Remove photo">${icon("close")}</button></div>`).join("")
+    + `<div class="shot-count">${icon("check")}<span>${n} photo${n > 1 ? "s" : ""} added</span></div>` : "";
+  $$("#est-thumbs .x").forEach(b => b.onclick = async () => { state.shots.splice(+b.dataset.i, 1); renderShots(); setMealFoot(); await saveDraft(); });
+  $("#est-photo").closest("label").classList.toggle("has", n > 0);
+  $("#est-photo-n").textContent = n ? n : "";
+}
+$("#est-photo").addEventListener("change", onPhotos);
+// the draft: photos (already shrunk), text and share, on the phone only; cleared when the meal is added or discarded
+let draftT = null;
+async function saveDraft() {
+  const text = $("#est-text").value;
+  if (state.fixing || (!state.shots.length && !text.trim())) return db.setSetting("meal_draft", "");
+  return db.setSetting("meal_draft", JSON.stringify({ shots: state.shots, text, share: state.share, day: state.day, t: Date.now() }));
+}
+$("#est-text").addEventListener("input", () => { clearTimeout(draftT); draftT = setTimeout(saveDraft, 600); });
+async function restoreDraft() {
+  let d = null; try { d = JSON.parse((await db.setting("meal_draft")) || "null"); } catch {}
+  if (!d || Date.now() - d.t > 24 * 3600e3 || (!d.shots?.length && !d.text?.trim())) return;
+  if (d.day && d.day !== state.day) await loadDay(d.day);
+  openSheet("meal");
+  state.shots = d.shots || []; $("#est-text").value = d.text || "";
+  state.share = d.share || 1; $$("#est-share button").forEach(x => x.classList.toggle("on", parseFloat(x.dataset.v) === state.share));
+  renderShots(); setMealFoot();
+  toast(d.shots?.length ? "Your photo is still here — carry on" : "Your meal note is still here — carry on", 3000);
+}
 
 // the sticky footer holds the one primary action for the current step:
 //   an estimate on screen → Discard / Add to log (adds the items too)
 //   only scanned items     → Add N items
 //   something to estimate  → Estimate
 function setMealFoot() {
-  const n = state.items.length, more = state.estFiles.length || state.fixImages.length || $("#est-text").value.trim();
+  const n = state.items.length, p = state.shots.length, more = p || state.fixImages.length || $("#est-text").value.trim();
   $("#meal-foot").innerHTML = state.est
     ? `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="est-add">Add to log</button>`
     : n && !more ? `<button class="btn ghost" id="est-discard">Discard</button><button class="btn primary" id="items-add">Add ${n} item${n === 1 ? "" : "s"}</button>`
-    : `<button class="btn primary block" id="est-go">Estimate${n ? ` + ${n} item${n === 1 ? "" : "s"}` : ""}</button>`;
+    : `<button class="btn primary block" id="est-go">Estimate${p ? ` ${p} photo${p > 1 ? "s" : ""}` : ""}${n ? ` + ${n} item${n === 1 ? "" : "s"}` : ""}</button>`;
 }
 $("#meal-foot").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.id === "est-go") { if (!state.estFiles.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); }
+  if (b.id === "est-go") { if (!state.shots.length && !state.fixImages.length && !$("#est-text").value.trim()) return toast("Add a photo or describe it"); runEstimate(); }
   else if (b.id === "est-discard") resetEstimate();
   else if (b.id === "est-add") addEstimate();
-  else if (b.id === "items-add") addItems({ close: true });
+  else if (b.id === "items-add") { if (askAmounts()) return; addItems({ close: true, group: newGroup() }); }
 };
 $("#est-text").addEventListener("input", setMealFoot);
 
@@ -378,14 +426,24 @@ function addItem(L, via) {
   state.items.push({ ...L, via, unit, count: 1, grams: unit ? null : (L.serving_g_or_ml || null) });
   renderItems(); setMealFoot();
 }
+const hasAmount = (it) => itemGrams(it) > 0 || (it.basis === "serving" && it.count > 0) || itemLine(it).kcal > 0 || itemLine(it).protein > 0;
+/** An item with no amount would log as nothing: stop and ask instead of dropping it quietly. */
+function askAmounts() {
+  const missing = state.items.findIndex(it => !hasAmount(it));
+  if (missing < 0) return false;
+  const it = state.items[missing], el = $$("#items .item")[missing];
+  toast(`How much ${it.product}? Type the ${it.basis === "100ml" ? "ml" : "grams"} — or remove it with ×`, 3500, "bad");
+  el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.querySelector('[data-f="grams"]')?.focus();
+  return true;
+}
 /** Log every item as its own row, at the same time, so each is editable and learnable on its own. */
-async function addItems({ close = false } = {}) {
+async function addItems({ close = false, group = null } = {}) {
   let n = 0;
   for (const it of state.items) {
-    const { kcal, protein, grams, count } = itemLine(it); if (!(kcal > 0 || protein > 0)) continue;
+    const { kcal, protein, grams, count } = itemLine(it); if (!hasAmount(it)) continue;   // a diet drink at 0 kcal is still something you had
     const unitPart = it.unit ? plural(count, it.unit.name) : null, gramsPart = grams != null ? `${Math.round(grams)} ${it.basis === "100ml" ? "ml" : "g"}` : null;
     const amount = [unitPart, unitPart && gramsPart ? gramsPart : (gramsPart || (it.basis === "serving" ? plural(count, "serving") : ""))].filter(Boolean).join(" · ");
-    await insertMeal({ label: `${it.product} (${amount})`, kcal, lo: kcal * 0.97, hi: kcal * 1.03, protein, source: it.via, share: 1, detail: { label: it, count, grams, unit: it.unit } }); n++;
+    await insertMeal({ label: `${it.product} (${amount})`, kcal, lo: kcal * 0.97, hi: kcal * 1.03, protein, source: it.via, share: 1, group, detail: { label: it, count, grams, unit: it.unit } }); n++;
   }
   state.items = []; renderItems();
   if (close) { toast(`Added ${n} item${n === 1 ? "" : "s"}`); resetEstimate(); closeSheets(); changed(); }
@@ -446,16 +504,17 @@ async function runEstimate(correction = null) {
   const text = correction ?? $("#est-text").value;
   $("#est-status").textContent = prior ? "refining…" : "estimating…"; if ($("#est-go")) $("#est-go").disabled = true;
   try {
-    const args = { apiKey: state.settings.gemini_key, images: prior ? [] : state.estFiles, text, share: state.share,
-      prior, priorImages: prior ? prior.images : state.fixImages, known: state.items.map(it => it.product), onStatus: (m) => $("#est-status").textContent = m };
+    const photos = [...state.shots.map(s => s.data), ...state.fixImages];
+    const args = { apiKey: state.settings.gemini_key, images: [], text, share: state.share,
+      prior, priorImages: prior ? prior.images : photos, known: state.items.map(it => it.product), onStatus: (m) => $("#est-status").textContent = m };
     const out = await withModelFallback(() => runGemini({ ...args, model: modelToUse() }));
     await rememberModel(out.model);
     const at = state.fixing ? ((await db.get("meals", state.fixing))?.at || atFor()) : atFor();
     const row = { day: at.slice(0, 10), at, text, share: state.share, model: out.model, ident: out.ident, result: out.result,
-      thumb: out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null,
+      thumb: state.shots[0]?.thumb || out.thumbs[0] || (prior?.thumb ?? null), usage: out.usage, parent_id: prior?.id ?? null, meal_id: null,
       sources: out.sources?.length ? out.sources : (prior?.sources || []), lookup_error: out.lookup_error || null };
     row.id = await db.add("estimates", row);
-    state.est = { ...row, images: out.images.length ? out.images : (prior ? prior.images : state.fixImages) };
+    state.est = { ...row, images: prior ? prior.images : photos };
     renderEstimate();
     const u = out.usage; $("#est-status").textContent = `${row.model.startsWith("openrouter:") ? `backup AI (${row.model.split("/").pop().replace(":free", "")}) — Gemini was down` : row.model} · ${fmt((u.promptTokenCount || 0) + (u.candidatesTokenCount || 0))} tokens · free`;
     if (!state.fixing) retryPending({ force: true });                // Gemini answers again: settle anything parked
@@ -473,9 +532,9 @@ async function runEstimate(correction = null) {
 /* Gemini failed, so the meal goes into the log NOW as an unvalued row, with its text and photos kept.
    retryPending() values it when Gemini answers again; tapping the row lets the person type it in. */
 async function parkEstimate(text, err) {
-  const logged = await addItems();                                   // the scanned items are exact: they go in now
-  const shots = [];
-  for (const f of state.estFiles) { try { shots.push(await prepareImage(f)); } catch {} }
+  const gid = newGroup();
+  const logged = await addItems({ group: gid });                    // the scanned items are exact: they go in now
+  const shots = state.shots;
   const images = [...shots.map(s => s.data), ...state.fixImages], thumb = shots[0]?.thumb || null;
   let mealId = state.fixing, at, guess = null;
   if (mealId) {
@@ -486,7 +545,7 @@ async function parkEstimate(text, err) {
     // a best guess instead of "?": your own past meals like it, else the reference table; the AI replaces it later
     guess = text.trim() ? roughGuess(text, state.all?.meals || [], state.share) : null;
     mealId = await insertMeal({ label: text.trim().slice(0, 80) || "Photo — waiting for AI", kcal: guess?.kcal || 0, lo: guess?.kcal_lo || 0, hi: guess?.kcal_hi || 0, protein: guess?.protein_g || 0,
-      source: "pending", share: 1, share_frac: state.share, needs_review: 1, detail: { raw: text, rough: guess ? { basis: guess.basis, from: guess.from } : null } });
+      source: "pending", share: 1, share_frac: state.share, needs_review: 1, group: gid, detail: { raw: text, rough: guess ? { basis: guess.basis, from: guess.from } : null } });
   }
   await db.add("estimates", { day: at.slice(0, 10), at, text, share: state.share, status: "pending", images, thumb, meal_id: mealId, attempts: 1, last_error: err.message,
     model: null, ident: null, result: null, usage: null, parent_id: null });
@@ -561,21 +620,25 @@ function renderEstimate() {
 }
 async function addEstimate() {
   const e = state.est, r = e?.result; if (!r) return;
-  const n = await addItems();
+  const fixed = state.fixing ? await db.get("meals", state.fixing) : null;
+  const gid = fixed?.meal_group || newGroup();
+  if (askAmounts()) return;
+  const n = await addItems({ group: gid });
   if (!r.items?.length && !(r.kcal > 0)) {                            // the model found nothing beyond the packages
     toast(n ? `Added ${n} item${n === 1 ? "" : "s"}` : "Nothing to add"); resetEstimate(); closeSheets(); changed(); return;
   }
   let id = null;
-  if (state.fixing) { const meal = await db.get("meals", state.fixing); if (meal) { await settlePending(meal.id, "done"); await valueRow(meal, r, e.id, /^(pending|photo)$/.test(meal.source) ? "photo" : "backfill-ai"); id = meal.id; } }
-  if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
+  if (fixed) { await settlePending(fixed.id, "done"); await valueRow({ ...fixed, meal_group: n ? gid : fixed.meal_group }, r, e.id, /^(pending|photo)$/.test(fixed.source) ? "photo" : "backfill-ai"); id = fixed.id; }
+  if (id == null) id = await insertMeal({ label: r.dish, kcal: r.kcal, lo: r.kcal_lo, hi: r.kcal_hi, protein: r.protein_g, source: "photo", share: 1, share_frac: r.share ?? 1, group: gid, detail: { estimate_id: e.id, confidence: r.confidence, model_share: r.model_share } });
   await db.put("estimates", { ...(await db.get("estimates", e.id)), meal_id: id });
   toast((state.fixing ? "Valued: " : "Added ") + r.dish + (n ? ` + ${n} item${n === 1 ? "" : "s"}` : "")); resetEstimate(); closeSheets(); changed();
 }
 function resetEstimate() {
   if (state.fixing) settlePending(state.fixing, "pending", "fixing");                                   // sheet gave up on it: back to the retry queue (no-op once settled)
-  state.est = null; state.estFiles = []; state.fixing = null; state.fixImages = []; state.items = []; state.share = 1; $("#items").innerHTML = "";
+  db.setSetting("meal_draft", "");
+  state.est = null; state.shots = []; state.fixing = null; state.fixImages = []; state.items = []; state.share = 1; $("#items").innerHTML = "";
   $$("#est-share button").forEach(x => x.classList.toggle("on", x.dataset.v === "1"));
-  $$("#est-thumbs img").forEach(i => i.src.startsWith("blob:") && URL.revokeObjectURL(i.src));
+  $("#est-photo").closest("label").classList.remove("has"); $("#est-photo-n").textContent = "";
   $("#est-fixing").hidden = true; $("#est-thumbs").innerHTML = ""; $("#est-text").value = ""; $("#recall").innerHTML = "";
   $("#est-result").hidden = true; $("#est-result").innerHTML = ""; $("#est-status").textContent = ""; setMealFoot();
 }
@@ -602,6 +665,32 @@ $("#manual").onsubmit = async (e) => {
 };
 
 // ------------------------------------------------------------ row sheet: edit / log again / delete
+/** "Ayam Brand baked beans + Chicken franks, fried egg" — the parts, without the amounts in brackets. */
+const mealName = (g) => g.map(m => String(m.label || "").replace(/\s*\([^)]*\)\s*$/, "").trim()).filter(Boolean).join(" + ");
+/** A meal of several parts: the parts (each opens on its own), the total, log it again, delete it. */
+function openMeal(g) {
+  const d = sheet("row"), body = $("#row-body"), sum = (f) => g.reduce((a, m) => a + (m[f] || 0), 0);
+  $("#row-title").textContent = "Meal";
+  body.innerHTML = `<div class="rowsheet">
+      <p class="meta">${g[0].at.slice(0, 10)} · ${g[0].at.slice(11, 16)} · ${g.length} parts</p>
+      <ul class="log parts">${g.map((m, i) => `<li data-i="${i}"><span class="ic">${icon(m.source === "barcode" || m.source === "label" ? "scan" : "meal")}</span><span class="l"><b>${esc(m.label)}</b><small>${esc(m.source === "pending" ? (m.kcal > 0 ? "rough guess · AI will refine it" : "waiting for AI") : m.source === "barcode" ? "barcode" : m.source === "label" ? "label" : m.source === "photo" ? "estimated" : m.source || "")}</small></span><span class="n"><b>${m.source === "pending" && !(m.kcal > 0) ? "?" : fmt(m.protein_g, 0) + " g"}</b><small>${m.source === "pending" && !(m.kcal > 0) ? "?" : fmt(m.kcal) + " kcal"}</small></span></li>`).join("")}</ul>
+      <div class="hero"><b>${fmt(sum("protein_g"), 0)} g · ${fmt(sum("kcal"))} kcal</b><small>the whole meal</small></div>
+      <p class="note">Tap a part to edit, value or remove it on its own.</p>
+      <div class="row gap"><button class="btn" id="mw-again">Log it again</button><button class="btn danger" id="mw-del">Delete meal</button></div>
+    </div>`;
+  $$("#row-body .parts li").forEach(li => li.onclick = () => openRow(g[+li.dataset.i], "meal"));
+  $("#mw-again").onclick = async () => {
+    const gid = newGroup(), at = atFor();
+    for (const m of g) if (m.source !== "pending") await insertMeal({ label: m.label, kcal: m.kcal, lo: m.kcal_lo, hi: m.kcal_hi, protein: m.protein_g, source: "repeat", group: gid, at });
+    d.close(); toast(`Added ${mealName(g)}`); changed();
+  };
+  $("#mw-del").onclick = async () => {
+    if (!confirm(`Delete all ${g.length} parts of this meal?`)) return;
+    for (const m of g) { await db.del("meals", m.id); await settlePending(m.id, "dropped"); }
+    d.close(); toast("Meal removed"); changed();
+  };
+  if (!d.open) d.showModal();
+}
 function openRow(r, kind) {
   const d = sheet("row"), body = $("#row-body");
   $("#row-title").textContent = kind === "meal" ? "Meal" : labelKind(r.kind);
@@ -652,7 +741,7 @@ function openRow(r, kind) {
     };
     $("#rw-del").onclick = async () => { await db.del("workouts", r.id); d.close(); toast("Removed"); changed(); };
   }
-  d.showModal();
+  if (!d.open) d.showModal();
 }
 
 // ------------------------------------------------------------ shake / products
@@ -1137,6 +1226,7 @@ window.addEventListener("resize", () => state.tab === "trend" && state.trend && 
       else openSetup();
     }
     await roughFill();
+    if (!$("#setup").open) await restoreDraft();                     // a photo picked before Android reloaded the app
     retryPending({ force: true });
     const s = state.settings, today = todayStr();
     if (s.gh_token && s.gh_repo) {
